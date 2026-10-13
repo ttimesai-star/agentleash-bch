@@ -17,7 +17,7 @@ import { randomBytes } from 'node:crypto';
 import { binToHex, decodeTransaction, hexToBin } from '@bitauth/libauth';
 import type { NetworkProvider } from 'cashscript';
 import { computeRequestHash, parseReceipt } from './receipt.js';
-import { lockingBytecodeOf } from './leash.js';
+import { DUST, lockingBytecodeOf } from './leash.js';
 
 export const X402_VERSION = 2;
 export const SCHEME_LEASH = 'leash';
@@ -75,6 +75,10 @@ export class LeashPaywall {
     if (!cfg.payTo.startsWith(prefix)) throw new Error(`payTo ${cfg.payTo} does not match network ${cfg.network}`);
     this.payToLock = binToHex(lockingBytecodeOf(cfg.payTo));
     if (!/^76a914[0-9a-f]{40}88ac$/.test(this.payToLock)) throw new Error('payTo must be a P2PKH address');
+    // A payment output below dust is non-standard: such a route could never be paid.
+    for (const r of cfg.routes) {
+      if (r.price < DUST) throw new Error(`route ${r.method.toUpperCase()} ${r.path} price ${r.price} sats is below dust (${DUST})`);
+    }
     this.ttl = cfg.nonceTtlMs ?? 120_000;
     this.now = cfg.now ?? Date.now;
   }
