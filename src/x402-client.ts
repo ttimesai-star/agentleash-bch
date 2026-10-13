@@ -20,9 +20,19 @@ export interface LeashFetchOptions {
   /** Proven age to claim for the state UTXO; 0 if unconfirmed. Must not exceed the real age. */
   elapsedAdd: (u: SpendableUtxo) => Promise<bigint>;
   fetchImpl?: typeof fetch;
+  /**
+   * Server settles only after N confirmations (202 = paid, waiting): re-send the SAME payment every
+   * intervalMs (default 30 s) until it is served or timeoutMs (default 30 min) passes. Never pays again.
+   * Off: the 202 is returned with `paid.paymentSignature` so the caller can re-send it later.
+   */
+  awaitConfirmations?: { intervalMs?: number; timeoutMs?: number };
 }
 
-export interface LeashFetchResult { response: Response; paid?: { amount: bigint; txid?: string; settlement?: SettlementResponse } }
+export interface LeashFetchResult {
+  response: Response;
+  /** paymentSignature: the PAYMENT-SIGNATURE header sent; re-send it (same request) while the server answers 202. */
+  paid?: { amount: bigint; txid?: string; settlement?: SettlementResponse; paymentSignature: string };
+}
 
 export async function leashFetch(url: string, init: RequestInit & { body?: string }, o: LeashFetchOptions): Promise<LeashFetchResult> {
   const f = o.fetchImpl ?? fetch;
@@ -45,8 +55,18 @@ export async function leashFetch(url: string, init: RequestInit & { body?: strin
     stateUtxo, agentPrivateKey: o.agentPrivateKey, payTo: req.payTo, amount, requestHash, elapsedAdd: await o.elapsedAdd(stateUtxo),
   });
   const payload: PaymentPayload = { x402Version: X402_VERSION, accepted: req, payload: { transaction: tx.build() } };
-  const second = await f(url, { ...init, headers: { ...(init.headers as Record<string, string> | undefined), 'PAYMENT-SIGNATURE': encodeHeader(payload) } });
-  const sr = second.headers.get('payment-response');
+  const paymentSignature = encodeHeader(payload);
+  const paidInit = { ...init, headers: { ...(init.headers as Record<string, string> | undefined), 'PAYMENT-SIGNATURE': paymentSignature } };
+  let response = await f(url, paidInit);
+  if (response.status === 202 && o.awaitConfirmations) {
+    const interval = o.awaitConfirmations.intervalMs ?? 30_000;
+    const deadline = Date.now() + (o.awaitConfirmations.timeoutMs ?? 30 * 60_000);
+    while (response.status === 202 && Date.now() < deadline) {
+      await new Promise((r) => setTimeout(r, interval));
+      response = await f(url, paidInit);
+    }
+  }
+  const sr = response.headers.get('payment-response');
   const settlement = sr ? decodeHeader<SettlementResponse>(sr) : undefined;
-  return { response: second, paid: { amount, txid: settlement?.transaction, settlement } };
+  return { response, paid: { amount, txid: settlement?.transaction, settlement, paymentSignature } };
 }

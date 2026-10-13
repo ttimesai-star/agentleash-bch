@@ -105,3 +105,109 @@ describe('Jules 2026-10-13: nonce store is bounded', () => {
     expect(() => mk({ maxNonces: 0 })).toThrow('maxNonces must be a positive integer');
   });
 });
+
+describe('Jules 2026-10-13: minConfirmations (0-conf double-spend), two-phase', () => {
+  // Jules' patch read `utxo.height`, which cashscript Utxo does not have: confirmations were always 0,
+  // so with minConfirmations > 0 the payment was broadcast and the content was never served.
+  const confMk = (min = 1) => {
+    let conf = 0;
+    const m = mk({ minConfirmations: min, confirmations: async () => conf });
+    return { ...m, setConf: (n: number) => { conf = n; } };
+  };
+  const settlementOf = (r: { headers?: Record<string, string> }) => decodeHeader<{ success: boolean; transaction?: string; errorReason?: string }>(r.headers!['PAYMENT-RESPONSE']);
+
+  it('minConfirmations > 0 requires a confirmations source', () => {
+    expect(() => mk({ minConfirmations: 1 })).toThrow('minConfirmations > 0 needs a confirmations(txid) source');
+    expect(() => mk({ minConfirmations: -1, confirmations: async () => 0 })).toThrow('minConfirmations must be a non-negative integer');
+  });
+
+  it('broadcasts, answers 202 without serving and without a new challenge; same payment serves once confirmed', async () => {
+    const m = confMk(1);
+    const sig = await m.pay(challengeOf(await m.paywall.handle(get('/weather'))));
+    const first = await m.paywall.handle(get('/weather', { 'payment-signature': sig }));
+    expect(first.status).toBe(202);
+    expect(first.headers!['PAYMENT-REQUIRED']).toBeUndefined(); // a generic x402 client must not pay again
+    const s1 = settlementOf(first);
+    expect(s1.success).toBe(false);
+    expect(s1.transaction).toMatch(/^[0-9a-f]{64}$/);
+    expect(s1.errorReason).toBe('awaiting 1 confirmation(s), have 0');
+    expect(m.served()).toBe(0);
+    // the payment really left the leash
+    expect((await m.ctx.leash.getUtxos()).state!.txid).toBe(s1.transaction);
+
+    expect((await m.paywall.handle(get('/weather', { 'payment-signature': sig }))).status).toBe(202);
+    m.setConf(1);
+    const done = await m.paywall.handle(get('/weather', { 'payment-signature': sig }));
+    expect(done.status).toBe(200);
+    expect(settlementOf(done)).toMatchObject({ success: true, transaction: s1.transaction });
+    expect(m.served()).toBe(1);
+    const replay = await m.paywall.handle(get('/weather', { 'payment-signature': sig }));
+    expect(replay.status).toBe(402);
+    expect(challengeOf(replay).error).toBe('nonce already used');
+    expect(m.served()).toBe(1);
+  });
+
+  it('a paid nonce outlives nonceTtlMs while it waits (blocks take minutes), and is never evicted', async () => {
+    let now = 1_000_000;
+    let conf = 0;
+    const m = mk({ minConfirmations: 1, confirmations: async () => conf, nonceTtlMs: 120_000, maxNonces: 5, now: () => now });
+    const sig = await m.pay(challengeOf(await m.paywall.handle(get('/weather'))));
+    expect((await m.paywall.handle(get('/weather', { 'payment-signature': sig }))).status).toBe(202);
+    now += 30 * 60_000; // 30 min, three blocks late
+    for (let i = 0; i < 50; i++) await m.paywall.handle(get('/weather')); // flood
+    conf = 1;
+    expect((await m.paywall.handle(get('/weather', { 'payment-signature': sig }))).status).toBe(200);
+  });
+
+  it('a waiting nonce cannot be redeemed with a different transaction', async () => {
+    const m = confMk(1);
+    const pr = challengeOf(await m.paywall.handle(get('/weather')));
+    const sig = await m.pay(pr);
+    expect((await m.paywall.handle(get('/weather', { 'payment-signature': sig }))).status).toBe(202);
+    const other = await m.pay(pr); // same nonce, new tx from the new state
+    m.setConf(6);
+    const r = await m.paywall.handle(get('/weather', { 'payment-signature': other }));
+    expect(r.status).toBe(402);
+    expect(challengeOf(r).error).toBe('nonce is awaiting confirmation of another transaction');
+    expect(m.served()).toBe(0);
+  });
+
+  it('a failing confirmations source counts as 0, not as confirmed', async () => {
+    const m = mk({ minConfirmations: 1, confirmations: async () => { throw new Error('electrum down'); } });
+    const sig = await m.pay(challengeOf(await m.paywall.handle(get('/weather'))));
+    expect((await m.paywall.handle(get('/weather', { 'payment-signature': sig }))).status).toBe(202);
+    const again = await m.paywall.handle(get('/weather', { 'payment-signature': sig }));
+    expect(again.status).toBe(202);
+    expect(settlementOf(again).errorReason).toBe('awaiting 1 confirmation(s), have 0');
+    expect(m.served()).toBe(0);
+  });
+
+  it('concurrent retries while waiting serve the content once', async () => {
+    const m = confMk(1);
+    const sig = await m.pay(challengeOf(await m.paywall.handle(get('/weather'))));
+    await m.paywall.handle(get('/weather', { 'payment-signature': sig }));
+    m.setConf(1);
+    const rs = await Promise.all([1, 2, 3].map(() => m.paywall.handle(get('/weather', { 'payment-signature': sig }))));
+    expect(rs.filter((r) => r.status === 200)).toHaveLength(1);
+    expect(rs.every((r) => r.status === 200 || r.status === 202)).toBe(true);
+    expect(m.served()).toBe(1);
+  });
+
+  it('default minConfirmations 0 keeps 0-conf settlement (200 on first try)', async () => {
+    const m = mk();
+    const sig = await m.pay(challengeOf(await m.paywall.handle(get('/weather'))));
+    expect((await m.paywall.handle(get('/weather', { 'payment-signature': sig }))).status).toBe(200);
+  });
+});
+
+describe('electrumConfirmations', () => {
+  it('reads confirmations from verbose blockchain.transaction.get; mempool (no field) is 0', async () => {
+    const calls: unknown[][] = [];
+    const conf = (await import('../src/index.js')).electrumConfirmations({
+      performRequest: async (...a: (string | number | boolean)[]) => { calls.push(a); return a[1] === 'aa' ? { confirmations: 9 } : {}; },
+    });
+    expect(await conf('aa')).toBe(9); // shape seen on chipnet 2026-10-13 for 9549bc3c...
+    expect(await conf('bb')).toBe(0);
+    expect(calls[0]).toEqual(['blockchain.transaction.get', 'aa', true]);
+  });
+});

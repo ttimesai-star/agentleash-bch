@@ -151,7 +151,11 @@ The `leash` scheme is ours (x402 `exact` for BCH allows only P2PKH inputs, so a 
 - the payload is the fully signed AgentLeash `pay` transaction; the server checks: 3 outputs, `out[1]` pays `payTo`
   at least the price with no tokens, `out[2]` is `LSH1` with `requestHash = sha256(nonce | method | url | sha256(body))`;
 - the nonce is consumed, the transaction is broadcast (mempool settlement), the content is returned;
-  a rejected broadcast reopens the nonce.
+  a rejected broadcast reopens the nonce;
+- optional `minConfirmations` (with a `confirmations(txid)` source, e.g. `electrumConfirmations(provider)`):
+  broadcast, answer `202` + `PAYMENT-RESPONSE` (no new challenge), serve when the same payment is re-sent after
+  N confirmations; `leashFetch({ awaitConfirmations })` re-sends it and never pays twice. Not run on chipnet yet;
+- route prices below dust (546 sats) are refused at start; the nonce store is capped (`maxNonces`, default 10 000).
 
 The agent client (`leashFetch`) refuses prices above its `maxPrice`, payees outside the leash allow-list, and
 anything over the covenant window (`LimitExceededError`) **before signing**.
@@ -169,8 +173,8 @@ rules: limit 6000 sats / 3 blocks, maxFee 2000, price 1500 sats:
 | third call | refused by the SDK before signing | `limit exceeded: 4410 of 6000 sats spent in this window, 2205 requested (payment + fee), 1590 left` |
 
 Known limits of the server: nonces live in memory (one process; a restart forgets open challenges);
-settlement is 0-conf (a payer could try a double spend before confirmation; double-spend proofs are not
-checked yet); the package entry imports `node:http` / `node:crypto`, the web build will need a separate entry point.
+settlement is 0-conf by default (a payer could try a double spend before confirmation; double-spend proofs are not
+checked; `minConfirmations` trades that for a wait of about 10 minutes per block); the package entry imports `node:http` / `node:crypto`, the web build will need a separate entry point.
 
 ## WizardConnect status
 

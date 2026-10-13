@@ -7,6 +7,8 @@
 // AgentLeash `pay` shape — out[1] pays `payTo`, out[2] is the receipt OP_RETURN "LSH1" <requestHash>,
 // where requestHash = computeRequestHash(nonce, method, resource url, body). The server checks the
 // payment and the binding, consumes the one-time nonce, then settles by broadcasting (mempool, 0-conf).
+// With `minConfirmations` > 0 settlement is two-phase: broadcast, answer 202 (no new challenge), and serve
+// when the client re-sends the same payment after the transaction has that many confirmations.
 //
 // Only `leash` is implemented. The standard `exact` scheme (@x402/bch) is NOT offered yet: advertising
 // it before it works would be dishonest.
@@ -46,6 +48,15 @@ export interface PaywallConfig {
   nonceTtlMs?: number;
   /** Most nonces held in memory; when full the oldest are evicted (never one being broadcast). Default 10 000. */
   maxNonces?: number;
+  /**
+   * Confirmations required before content is served. Default 0: serve on mempool acceptance (a payer
+   * could race a double spend). Above 0 needs `confirmations`.
+   */
+  minConfirmations?: number;
+  /** Confirmations of a txid (0 if unconfirmed or unknown). See `electrumConfirmations`. */
+  confirmations?: (txid: string) => Promise<number>;
+  /** How long a broadcast payment may wait for confirmations; its nonce stays reserved. Default 2 h. */
+  confirmTimeoutMs?: number;
   now?: () => number;
 }
 
@@ -64,13 +75,29 @@ export const encodeHeader = (o: unknown): string =>
   Buffer.from(JSON.stringify(o, (_k, v) => (typeof v === 'bigint' ? v.toString() : v)), 'utf8').toString('base64');
 export const decodeHeader = <T>(h: string): T => JSON.parse(Buffer.from(h, 'base64').toString('utf8')) as T;
 
-interface NonceRecord { method: string; path: string; url: string; price: bigint; expires: number; state: 'open' | 'pending' | 'used' }
+interface NonceRecord {
+  method: string; path: string; url: string; price: bigint; expires: number;
+  /** settling: broadcast, waiting for minConfirmations. pending: a broadcast or confirmation check is in flight. */
+  state: 'open' | 'pending' | 'settling' | 'used';
+  /** Set once broadcast. */
+  txid?: string; txHex?: string;
+}
+
+/** Confirmations source for `PaywallConfig.confirmations` over Electrum/Fulcrum (verbose transaction.get). */
+export function electrumConfirmations(provider: { performRequest(name: string, ...p: (string | number | boolean)[]): Promise<unknown> }) {
+  return async (txid: string): Promise<number> => {
+    const r = await provider.performRequest('blockchain.transaction.get', txid, true) as { confirmations?: number } | undefined;
+    return typeof r?.confirmations === 'number' ? r.confirmations : 0;
+  };
+}
 
 export class LeashPaywall {
   readonly nonces = new Map<string, NonceRecord>();
   private readonly payToLock: string;
   private readonly ttl: number;
   private readonly maxNonces: number;
+  private readonly minConf: number;
+  private readonly confirmTimeout: number;
   private readonly now: () => number;
 
   constructor(readonly cfg: PaywallConfig) {
@@ -85,6 +112,10 @@ export class LeashPaywall {
     this.ttl = cfg.nonceTtlMs ?? 120_000;
     this.maxNonces = cfg.maxNonces ?? 10_000;
     if (!Number.isInteger(this.maxNonces) || this.maxNonces < 1) throw new Error('maxNonces must be a positive integer');
+    this.minConf = cfg.minConfirmations ?? 0;
+    if (!Number.isInteger(this.minConf) || this.minConf < 0) throw new Error('minConfirmations must be a non-negative integer');
+    if (this.minConf > 0 && !cfg.confirmations) throw new Error('minConfirmations > 0 needs a confirmations(txid) source');
+    this.confirmTimeout = cfg.confirmTimeoutMs ?? 2 * 60 * 60_000;
     this.now = cfg.now ?? Date.now;
   }
 
@@ -97,18 +128,20 @@ export class LeashPaywall {
    * nonce lives `ttl`, so expired ones sit at the front: drop them until the first live one (O(1)
    * amortised, not a full scan per request). If still full, evict the oldest. A client whose nonce was
    * evicted gets "unknown nonce" before anything is broadcast, so it loses no money. A nonce whose
-   * broadcast is in flight ('pending') is never removed.
+   * broadcast is in flight ('pending') or that is paid and waiting ('settling') is never evicted; a
+   * settling one is dropped only after confirmTimeoutMs (e.g. its payment was double-spent).
    */
   private pruneNonces(): void {
     const now = this.now();
     for (const [k, v] of this.nonces) {
       if (v.state === 'pending') continue;
+      if (v.state === 'settling') { if (v.expires < now) this.nonces.delete(k); continue; }
       if (v.expires >= now) break;
       this.nonces.delete(k);
     }
     if (this.nonces.size < this.maxNonces) return;
     for (const [k, v] of this.nonces) {
-      if (v.state === 'pending') continue;
+      if (v.state === 'pending' || v.state === 'settling') continue;
       this.nonces.delete(k);
       if (this.nonces.size < this.maxNonces) break;
     }
@@ -168,6 +201,8 @@ export class LeashPaywall {
     if (!header) return this.challenge(route);
     let payload: PaymentPayload;
     try { payload = decodeHeader<PaymentPayload>(header); } catch { return this.challenge(route, 'malformed PAYMENT-SIGNATURE'); }
+    const waiting = this.nonces.get(String(payload?.accepted?.extra?.nonce));
+    if (waiting?.txid && (waiting.state === 'settling' || waiting.state === 'pending')) return this.resume(req, route, waiting, payload);
     const v = this.verify(req, route, payload);
     if (!v.ok) return this.challenge(route, v.reason);
     const rec = this.nonces.get(v.nonce)!;
@@ -181,9 +216,44 @@ export class LeashPaywall {
       const r = this.challenge(route, settle.errorReason);
       return { ...r, headers: { ...r.headers, 'PAYMENT-RESPONSE': encodeHeader(settle) } };
     }
+    if (this.minConf > 0) {
+      Object.assign(rec, { state: 'settling', txid, txHex: v.txHex.toLowerCase(), expires: this.now() + this.confirmTimeout });
+      return this.awaiting(txid, 0);
+    }
+    return this.serve(req, route, rec, txid);
+  }
+
+  private async serve(req: PlainRequest, route: PaidRoute, rec: NonceRecord, txid: string): Promise<PlainResponse> {
     rec.state = 'used';
     const content = await route.handler(req);
     const settle: SettlementResponse = { success: true, transaction: txid, network: this.cfg.network };
     return { ...content, headers: { ...content.headers, 'PAYMENT-RESPONSE': encodeHeader(settle) } };
+  }
+
+  /** 202, not 402: the payment is made, so no new challenge that a generic x402 client would pay again. */
+  private awaiting(txid: string, have: number): PlainResponse {
+    const settle: SettlementResponse = {
+      success: false, transaction: txid, network: this.cfg.network, errorReason: `awaiting ${this.minConf} confirmation(s), have ${have}`,
+    };
+    return {
+      status: 202,
+      headers: { 'PAYMENT-RESPONSE': encodeHeader(settle), 'retry-after': '60', 'content-type': 'application/json' },
+      body: JSON.stringify({ status: 'awaiting-confirmations', transaction: txid, required: this.minConf, confirmations: have }),
+    };
+  }
+
+  /** The client re-sends its broadcast payment: serve once it has minConfirmations. */
+  private async resume(req: PlainRequest, route: PaidRoute, rec: NonceRecord, p: PaymentPayload): Promise<PlainResponse> {
+    if (rec.method !== req.method.toUpperCase() || rec.path !== req.path) return this.challenge(route, 'nonce issued for another resource');
+    const tx = p?.payload?.transaction;
+    if (typeof tx !== 'string' || tx.toLowerCase() !== rec.txHex) return this.challenge(route, 'nonce is awaiting confirmation of another transaction');
+    const txid = rec.txid!;
+    if (rec.state === 'pending') return this.awaiting(txid, 0); // a concurrent retry is checking right now
+    rec.state = 'pending';
+    let have = 0;
+    try { have = await this.cfg.confirmations!(txid); } catch { have = 0; }
+    if (have >= this.minConf) return this.serve(req, route, rec, txid);
+    rec.state = 'settling';
+    return this.awaiting(txid, have);
   }
 }
