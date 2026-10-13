@@ -5,3 +5,4 @@ scripts/chipnet-state*.json
 .env
 local/
 .jules_brief*
+scripts/x402-chipnet-state.json
