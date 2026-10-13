@@ -44,6 +44,8 @@ export interface PaywallConfig {
   provider: NetworkProvider;
   /** One-time nonce lifetime. Default 120 s. */
   nonceTtlMs?: number;
+  /** Most nonces held in memory; when full the oldest are evicted (never one being broadcast). Default 10 000. */
+  maxNonces?: number;
   now?: () => number;
 }
 
@@ -68,6 +70,7 @@ export class LeashPaywall {
   readonly nonces = new Map<string, NonceRecord>();
   private readonly payToLock: string;
   private readonly ttl: number;
+  private readonly maxNonces: number;
   private readonly now: () => number;
 
   constructor(readonly cfg: PaywallConfig) {
@@ -80,6 +83,8 @@ export class LeashPaywall {
       if (r.price < DUST) throw new Error(`route ${r.method.toUpperCase()} ${r.path} price ${r.price} sats is below dust (${DUST})`);
     }
     this.ttl = cfg.nonceTtlMs ?? 120_000;
+    this.maxNonces = cfg.maxNonces ?? 10_000;
+    if (!Number.isInteger(this.maxNonces) || this.maxNonces < 1) throw new Error('maxNonces must be a positive integer');
     this.now = cfg.now ?? Date.now;
   }
 
@@ -87,8 +92,30 @@ export class LeashPaywall {
     return this.cfg.routes.find((r) => r.method.toUpperCase() === req.method.toUpperCase() && r.path === req.path);
   }
 
+  /**
+   * Unpaid requests create nonces, so the store must stay bounded. Map order is issue order and every
+   * nonce lives `ttl`, so expired ones sit at the front: drop them until the first live one (O(1)
+   * amortised, not a full scan per request). If still full, evict the oldest. A client whose nonce was
+   * evicted gets "unknown nonce" before anything is broadcast, so it loses no money. A nonce whose
+   * broadcast is in flight ('pending') is never removed.
+   */
+  private pruneNonces(): void {
+    const now = this.now();
+    for (const [k, v] of this.nonces) {
+      if (v.state === 'pending') continue;
+      if (v.expires >= now) break;
+      this.nonces.delete(k);
+    }
+    if (this.nonces.size < this.maxNonces) return;
+    for (const [k, v] of this.nonces) {
+      if (v.state === 'pending') continue;
+      this.nonces.delete(k);
+      if (this.nonces.size < this.maxNonces) break;
+    }
+  }
+
   private challenge(route: PaidRoute, error?: string): PlainResponse {
-    for (const [k, v] of this.nonces) if (v.expires < this.now() && v.state !== 'pending') this.nonces.delete(k);
+    this.pruneNonces();
     const nonce = randomBytes(16).toString('hex');
     const url = this.cfg.origin + route.path;
     this.nonces.set(nonce, { method: route.method.toUpperCase(), path: route.path, url, price: route.price, expires: this.now() + this.ttl, state: 'open' });

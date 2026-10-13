@@ -60,3 +60,48 @@ describe('Jules 2026-10-13: PAYMENT-SIGNATURE header name is case-insensitive', 
     expect(m.served()).toBe(1);
   });
 });
+
+describe('Jules 2026-10-13: nonce store is bounded', () => {
+  it('unpaid requests cannot grow the nonce map past maxNonces', async () => {
+    const m = mk({ maxNonces: 50 });
+    for (let i = 0; i < 500; i++) await m.paywall.handle(get('/weather'));
+    expect(m.paywall.nonces.size).toBeLessThanOrEqual(50);
+  });
+
+  it('default cap is 10 000 open challenges', async () => {
+    const m = mk();
+    for (let i = 0; i < 10_200; i++) await m.paywall.handle(get('/weather'));
+    expect(m.paywall.nonces.size).toBe(10_000);
+  });
+
+  it('expired nonces are dropped; a fresh challenge still pays after a flood', async () => {
+    let now = 1_000_000;
+    const m = mk({ maxNonces: 20, nonceTtlMs: 1_000, now: () => now });
+    for (let i = 0; i < 20; i++) await m.paywall.handle(get('/weather'));
+    now += 2_000;
+    const pr = challengeOf(await m.paywall.handle(get('/weather')));
+    expect(m.paywall.nonces.size).toBe(1);
+    expect((await m.paywall.handle(get('/weather', { 'payment-signature': await m.pay(pr) }))).status).toBe(200);
+  });
+
+  it('a nonce whose broadcast is in flight is never evicted', async () => {
+    const m = mk({ maxNonces: 3 });
+    const pr = challengeOf(await m.paywall.handle(get('/weather')));
+    const nonce = pr.accepts[0].extra.nonce;
+    const sig = await m.pay(pr);
+    let release!: () => void;
+    const gate = new Promise<void>((r) => { release = r; });
+    const send = m.ctx.provider.sendRawTransaction.bind(m.ctx.provider);
+    m.ctx.provider.sendRawTransaction = async (hex: string) => { await gate; return send(hex); };
+    const paid = m.paywall.handle(get('/weather', { 'payment-signature': sig }));
+    for (let i = 0; i < 10; i++) await m.paywall.handle(get('/weather'));
+    expect(m.paywall.nonces.get(nonce)?.state).toBe('pending');
+    release();
+    expect((await paid).status).toBe(200);
+    expect(m.paywall.nonces.get(nonce)?.state).toBe('used');
+  });
+
+  it('rejects maxNonces below 1', () => {
+    expect(() => mk({ maxNonces: 0 })).toThrow('maxNonces must be a positive integer');
+  });
+});
