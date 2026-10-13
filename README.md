@@ -6,16 +6,20 @@ fast. The owner can take everything back at any time without the agent's key.
 
 Built for BCH BLAZE 2026. License: MIT.
 
-## Status (honest)
+## Status (honest): prototype, unaudited
 
-| Part | State |
+**Prototype, unaudited. Chipnet only. Do not put real money in it.** No external users yet; no
+professional audit; the contract is not frozen.
+
+| Part | State (13.10.2026) |
 |---|---|
-| `contracts/AgentLeash.cash` (CashScript 0.14) | v0, written 10.10.2026. Two automated review passes (Jules, see `REVIEW.md`: no critical/high/medium findings; two low SDK findings fixed), not a professional audit. **Not frozen; do not put real money in it.** |
+| `contracts/AgentLeash.cash` (CashScript 0.14) | v0. Two automated review passes (Jules, `REVIEW.md`), not a professional audit. Not frozen. |
 | TypeScript SDK (`src/`) | genesis, pay, top-up, withdraw, receipt + request-hash helpers |
-| Tests (MockNetworkProvider, vitest) | 94 tests: happy paths, 29 attack cases, owner path, genesis, 6-seed property test, plus 39 tests from two external review passes (`REVIEW.md`) |
-| Chipnet | full scenario run with real transactions, see below |
-| x402 server (`exact` + `leash` schemes), agent, web UI (WizardConnect) | not started (stage 2) |
-| Mainnet | not deployed (planned after security review and code freeze) |
+| WizardConnect owner path (`src/wc.ts`) | sign-request builder, relay serialization, reference signer for tests, VM verification. Live relay round trip PASS. **Not yet tested with a real wallet app** (see below). |
+| 402 paywall, `leash` scheme (`src/x402.ts`, `src/x402-client.ts`, `src/http.ts`) | works on mock and on chipnet (real transactions, see below). `exact` scheme not implemented and not advertised. |
+| Tests (vitest, MockNetworkProvider with validation) | **112**: 94 stage-1 (happy paths, 29 attacks, owner path, property test, 39 from two review passes) + 7 WizardConnect + 11 paywall/agent |
+| Chipnet | stage-1 scenario (covenant) and stage-2 scenario (402 server + agent), logs in `scripts/` |
+| Web UI, LLM agent with paid tools, mainnet | not started |
 
 ## How it works
 
@@ -77,7 +81,7 @@ Changing them = owner migrates the NFT and funds to a new address.
   the SDK does this (`categoryToVmBytes`), and a test shows that the wrong order makes the leash unusable.
 - Off-chain: the receipt hash binds a payment to an HTTP request
   (`sha256(nonce | method | url | sha256(body))`, length-prefixed). Replay protection of the nonce is the
-  402 server's job (stage 2).
+  402 server's job (one-time nonce in `src/x402.ts`).
 
 ## Attack matrix (each is a test in `test/leash.test.ts`)
 
@@ -137,6 +141,62 @@ Note: on a chain node the contract-level rejections all surface as
 rejected one layer earlier by consensus (`non-BIP68-final`). The `localReason` field in the log is the
 failing `require` from CashScript's local debugger for the same transaction hex.
 
+## 402 paywall (`leash` scheme)
+
+Message shape follows x402 v2: `402` + `PAYMENT-REQUIRED` (base64 JSON), retry with `PAYMENT-SIGNATURE`,
+`200` + `PAYMENT-RESPONSE` with the txid. Network ids `bch:bchtest` / `bch:bitcoincash`, amount in sats as a string.
+The `leash` scheme is ours (x402 `exact` for BCH allows only P2PKH inputs, so a covenant payment cannot use it):
+
+- the challenge carries a one-time `nonce` (16 bytes, TTL 120 s, bound to method + path);
+- the payload is the fully signed AgentLeash `pay` transaction; the server checks: 3 outputs, `out[1]` pays `payTo`
+  at least the price with no tokens, `out[2]` is `LSH1` with `requestHash = sha256(nonce | method | url | sha256(body))`;
+- the nonce is consumed, the transaction is broadcast (mempool settlement), the content is returned;
+  a rejected broadcast reopens the nonce.
+
+The agent client (`leashFetch`) refuses prices above its `maxPrice`, payees outside the leash allow-list, and
+anything over the covenant window (`LimitExceededError`) **before signing**.
+
+Chipnet run, 13.10.2026 (`npx tsx scripts/x402-chipnet.ts run`, log `scripts/x402-chipnet-log.jsonl`),
+rules: limit 6000 sats / 3 blocks, maxFee 2000, price 1500 sats:
+
+| Step | Result | txid / response |
+|---|---|---|
+| genesis (owner), 20 000 sats | accepted | `f1724b91583953010cb75c43b7b91b95cd42dda82cb2b6a4e54468cd1a253be3` |
+| GET /price without payment | 402 + challenge | nonce `fee8473a...` |
+| retry with payment | 200, settled | `9549bc3cdf7466c091bed82a430c2659a51da529c2d991ae695cbd1272389394` |
+| replay the same payment header | 402 | `nonce already used` |
+| second call (`leashFetch`, chained on the unconfirmed state) | 200, state (0, 4410) | `21833be355ce1cec56fa58dbbd5059678965120114873eb6e8bbf9c8fc21838b` |
+| third call | refused by the SDK before signing | `limit exceeded: 4410 of 6000 sats spent in this window, 2205 requested (payment + fee), 1590 left` |
+
+Known limits of the server: nonces live in memory (one process; a restart forgets open challenges);
+settlement is 0-conf (a payer could try a double spend before confirmation; double-spend proofs are not
+checked yet); the package entry imports `node:http` / `node:crypto`, the web build will need a separate entry point.
+
+## WizardConnect status
+
+WizardConnect is Riften Labs' dapp-to-HD-wallet protocol over an encrypted Nostr relay (`hdwalletv1`),
+libraries `@wizardconnect/{core,dapp,react,wallet}` 0.2.x, LGPL-3.0
+([docs](https://docs.riftenlabs.com/wizardconnect/), [repo](https://gitlab.com/riftenlabs/lib/wizardconnect)).
+We only link the libraries, no modifications.
+
+How AgentLeash uses it: only the **owner** signs through the wallet (genesis, top-up, withdraw). On the
+owner path the contract input needs no signature (`owner(ownerInputIndex)`), so the wallet signs just its
+own P2PKH input. The agent signs `pay` with its own key.
+
+| Question | Answer | Source / evidence |
+|---|---|---|
+| Can a wallet sign our owner-path transactions? | Per spec yes: the wallet signs the inputs named in `inputPaths` with `SIGHASH_ALL, UTXOS, FORKID` (0x61); contract inputs with pre-set unlocking bytecode may be omitted | `docs/protocol.md`, `docs/wallet.md` in the repo |
+| Does the state NFT survive the relay? | Yes, `sourceOutputToRelay` keeps category, amount, capability, commitment | `@wizardconnect/core` 0.2.4 `hdwalletv1-serialize.js`; test `withdraw: wallet signs only its input` |
+| Network (chipnet) field in the protocol? | None. The wallet decides; the xpub version shows it | `@wizardconnect/core` types |
+| Paytaca | Open-source WizardConnect code: chipnet mode (`bchtest` prefix, testnet xpub), signs P2PKH inputs from `inputPaths` with 0x61, leaves other inputs untouched, accepts token source outputs | [paytaca-app `src/wallet/wizardconnect/service.js`](https://github.com/paytaca/paytaca-app/blob/master/src/wallet/wizardconnect/service.js), [`src/wallet/bch-sign.js`](https://github.com/paytaca/paytaca-app/blob/master/src/wallet/bch-sign.js) |
+| Selene | Listed as a WizardConnect wallet; source not found, chipnet support **unknown** | [Riften wallet table](https://docs.riftenlabs.com/cauldron/wallets) |
+| Relay transport with our transactions | **PASS** 13.10.2026: dapp and a headless test wallet over `wss://relay.riften.net` + `wss://relay.cauldron.quest`: handshake, xpub, sign request/response for a withdraw carrying the state NFT, VM-verified | `npx tsx scripts/wc-relay-smoke.ts` |
+| A real wallet app signing our request | **NOT TESTED** (needs Paytaca on a phone or the Paytaca browser extension, chipnet mode) | open item, first task of the next step |
+
+Security notes from the tests: with `SIGHASH_UTXOS`, a dapp that lies to the wallet about the state NFT gets a
+signature the network rejects; the reference signer refuses an input path that is not the wallet's own P2PKH.
+`signWizardRequest` in `src/wc.ts` is a test double, not a wallet.
+
 ## Usage
 
 ```bash
@@ -144,6 +204,8 @@ npm install
 npm test            # vitest, MockNetworkProvider
 npm run compile     # cashc -> artifacts/
 npx tsx scripts/chipnet.ts status|genesis|pay <sats>|attack <kind>|withdraw
+npx tsx scripts/x402-chipnet.ts status|run|withdraw   # 402 server + agent on chipnet
+npx tsx scripts/wc-relay-smoke.ts                     # WizardConnect relay round trip
 ```
 
 ```ts
@@ -162,8 +224,21 @@ await tx.send();
 `buildPay` mirrors the contract off-chain and throws `LimitExceededError` with "N left, resets in ~M blocks"
 before anything is signed, so an agent gets a readable reason instead of a node error.
 
+## Plan to BCH BLAZE submission (21.11.2026 16:00 Minsk)
+
+| Dates | Step | Done when |
+|---|---|---|
+| 14-17.10 | Real wallet: Paytaca (chipnet) signs genesis, top-up and withdraw built by `toWizardSignRequest`; try Selene | 3 chipnet txids signed in the app, or a documented blocker with the wallet's error text |
+| 18-24.10 | Web UI (Vite + React, `@wizardconnect/react`): connect, create, fund, withdraw, journal, "try to break it"; separate browser entry point | live page on chipnet |
+| 18-24.10 | `exact` scheme next to `leash`, checked against `@x402/bch` | interop test passes |
+| 25-30.10 | LLM agent with three paid tools; Jules review #3, a second-vendor review, Semgrep / npm audit / gitleaks | findings fixed or documented |
+| 31.10 | Code freeze of the contract | tag |
+| 01-10.11 | Mainnet: one small leash (owner funds at most ~10 USD), demo hosting | mainnet txids in this README |
+| 11-17.11 | Video (no face, no voice), submission text; internal deadline 17.11 | submitted draft |
+| 21.11 | Submission: mainnet tx, WizardConnect, demo | submitted |
+
 ## Roadmap
 
-- x402 v2 server offering both `exact` (standard P2PKH, compatible with `@x402/bch`, x402-foundation/x402 PR #3632 at `b297bc3`) and a `leash` scheme for covenant payments (receipt + request hash, mempool settlement).
+- `exact` scheme (standard P2PKH, compatible with `@x402/bch`, x402-foundation/x402 PR #3632 at `b297bc3`) next to the working `leash` scheme.
 - LLM agent with three paid tools; web UI over WizardConnect (create, fund, withdraw, journal, "try to break it").
 - Security review and code freeze before any mainnet deployment.
