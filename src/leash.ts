@@ -10,14 +10,27 @@ import { receiptLockingBytecode } from './receipt.js';
 export const MIN_STATE_VALUE = 1000n;
 export const DUST = 546n;
 
+/** Size of a P2PKH unlocking bytecode with a Schnorr signature: PUSH65 <sig> PUSH33 <pubkey>. */
+export const P2PKH_UNLOCK_BYTES = 1 + 65 + 1 + 33;
+
+/** True for `placeholderP2PKHUnlocker(...)` from cashscript: a WizardConnect wallet fills the input later. */
+export const isPlaceholder = (u: Unlocker): boolean => (u as { placeholder?: boolean }).placeholder === true;
+
+/**
+ * Bytes a wallet adds when it signs placeholder inputs. A placeholder unlocker produces an EMPTY
+ * unlocking bytecode; CashScript's fee check already adds these bytes and refuses an underpaying
+ * transaction, so `withAutoFee` adds them up front instead of converging through that error.
+ */
+export const placeholderBytes = (unlockers: Unlocker[]): number => unlockers.filter(isPlaceholder).length * P2PKH_UNLOCK_BYTES;
+
 /**
  * Build with a provisional fee, measure the signed size, rebuild with size * feeRate (+ margin) and
  * repeat until the fee covers the size of the transaction actually returned. Re-measuring matters when
  * the fee decides whether a change output exists (Jules review AL-04): the final transaction can be
  * one output larger than the probe.
  */
-export function withAutoFee(build: (fee: bigint) => TransactionBuilder, feeRate = 1, margin = 5n): { builder: TransactionBuilder; fee: bigint } {
-  const need = (hex: string) => BigInt(Math.ceil((hex.length / 2) * feeRate)) + margin;
+export function withAutoFee(build: (fee: bigint) => TransactionBuilder, feeRate = 1, margin = 5n, extraBytes = 0): { builder: TransactionBuilder; fee: bigint } {
+  const need = (hex: string) => BigInt(Math.ceil((hex.length / 2 + extraBytes) * feeRate)) + margin;
   let fee: bigint | undefined;
   let lastErr: unknown;
   for (const probeFee of [2000n, 1000n, 600n]) {
@@ -212,7 +225,7 @@ export class AgentLeash {
     ownerTokenAddress?: string;
     fee?: bigint;
   }): TransactionBuilder {
-    if (args.fee === undefined) return withAutoFee((f) => this.buildWithdraw({ ...args, fee: f })).builder;
+    if (args.fee === undefined) return withAutoFee((f) => this.buildWithdraw({ ...args, fee: f }), 1, 5n, placeholderBytes([args.ownerUnlocker])).builder;
     const fee = args.fee;
     const isState = (u: Utxo) => u.token?.category === this.params.stateCategory && u.token.nft?.capability === 'mutable';
     // Jules review AL-06: stray tokens someone sent to the leash are forwarded to the owner, not burned.
@@ -235,7 +248,7 @@ export class AgentLeash {
   buildTopUp(args: {
     stateUtxo: Utxo; ownerUtxo: Utxo; ownerUnlocker: Unlocker; ownerAddress: string; amount: bigint; fee?: bigint;
   }): TransactionBuilder {
-    if (args.fee === undefined) return withAutoFee((f) => this.buildTopUp({ ...args, fee: f })).builder;
+    if (args.fee === undefined) return withAutoFee((f) => this.buildTopUp({ ...args, fee: f }), 1, 5n, placeholderBytes([args.ownerUnlocker])).builder;
     const fee = args.fee;
     const change = args.ownerUtxo.satoshis - args.amount - fee;
     const outputs: Output[] = [{
@@ -266,7 +279,7 @@ export function buildGenesis(args: {
   fee?: bigint;
 }): { leash: AgentLeash; builder: TransactionBuilder } {
   if (args.fee === undefined) {
-    const { builder } = withAutoFee((f) => buildGenesis({ ...args, fee: f }).builder);
+    const { builder } = withAutoFee((f) => buildGenesis({ ...args, fee: f }).builder, 1, 5n, placeholderBytes([args.ownerUnlocker]));
     return { leash: buildGenesis({ ...args, fee: 0n }).leash, builder };
   }
   if (args.ownerUtxo.vout !== 0) throw new Error('genesis needs an owner UTXO with vout 0 (do a self-send first)');
