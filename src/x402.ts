@@ -135,7 +135,9 @@ export class LeashPaywall {
   async handle(req: PlainRequest): Promise<PlainResponse> {
     const route = this.route(req);
     if (!route) return { status: 404, body: 'not found' };
-    const header = req.headers['payment-signature'] ?? req.headers['PAYMENT-SIGNATURE'];
+    // HTTP header names are case-insensitive; adapters other than node:http may keep the sender's casing.
+    const header = req.headers['payment-signature']
+      ?? Object.entries(req.headers).find(([k]) => k.toLowerCase() === 'payment-signature')?.[1];
     if (!header) return this.challenge(route);
     let payload: PaymentPayload;
     try { payload = decodeHeader<PaymentPayload>(header); } catch { return this.challenge(route, 'malformed PAYMENT-SIGNATURE'); }

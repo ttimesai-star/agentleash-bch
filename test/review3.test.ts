@@ -50,3 +50,13 @@ describe('Jules 2026-10-13: route price at or above dust', () => {
     });
   });
 });
+
+describe('Jules 2026-10-13: PAYMENT-SIGNATURE header name is case-insensitive', () => {
+  it('a framework that keeps "Payment-Signature" as sent still gets paid content', async () => {
+    const m = mk();
+    const sig = await m.pay(challengeOf(await m.paywall.handle(get('/weather'))));
+    const r = await m.paywall.handle(get('/weather', { 'Payment-Signature': sig }));
+    expect(r.status).toBe(200);
+    expect(m.served()).toBe(1);
+  });
+});
