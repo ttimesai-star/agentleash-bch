@@ -62,7 +62,14 @@ export async function leashFetch(url: string, init: RequestInit & { body?: strin
     const interval = o.awaitConfirmations.intervalMs ?? 30_000;
     const deadline = Date.now() + (o.awaitConfirmations.timeoutMs ?? 30 * 60_000);
     while (response.status === 202 && Date.now() < deadline) {
-      await new Promise((r) => setTimeout(r, interval));
+      // Abortable wait: a caller's abort ends the wait at once, not after the next interval.
+      await new Promise<void>((resolve, reject) => {
+        const sig = init.signal;
+        if (sig?.aborted) return reject(sig.reason ?? new DOMException('Aborted', 'AbortError'));
+        const t = setTimeout(() => { sig?.removeEventListener('abort', onAbort); resolve(); }, interval);
+        const onAbort = () => { clearTimeout(t); reject(sig!.reason ?? new DOMException('Aborted', 'AbortError')); };
+        sig?.addEventListener('abort', onAbort, { once: true });
+      });
       try {
         response = await f(url, paidInit);
       } catch (e) {

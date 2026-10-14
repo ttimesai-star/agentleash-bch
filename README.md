@@ -17,7 +17,7 @@ professional audit; the contract is not frozen.
 | TypeScript SDK (`src/`) | genesis, pay, top-up, withdraw, receipt + request-hash helpers |
 | WizardConnect owner path (`src/wc.ts`) | sign-request builder, relay serialization, reference signer for tests, VM verification. Live relay round trip PASS. **Not yet tested with a real wallet app** (see below). |
 | 402 paywall, `leash` scheme (`src/x402.ts`, `src/x402-client.ts`, `src/http.ts`) | works on mock and on chipnet (real transactions, see below). `exact` scheme not implemented and not advertised. |
-| Tests (vitest, MockNetworkProvider with validation) | **145**: 94 stage-1 (happy paths, 29 attacks, owner path, property test, 39 from two review passes) + 7 WizardConnect + 44 paywall/agent (incl. Jules review fixes: dust floor, nonce cap, header case, minConfirmations; round 2: "already known" broadcast checked against the node, handler failure after payment, 429 when every nonce is in flight, poll retry) |
+| Tests (vitest, MockNetworkProvider with validation) | **147**: 94 stage-1 (happy paths, 29 attacks, owner path, property test, 39 from two review passes) + 7 WizardConnect + 46 paywall/agent (incl. Jules review fixes: dust floor, nonce cap, header case, minConfirmations; round 2: "already known" broadcast checked against the node, handler failure after payment, 429 when every nonce is in flight, poll retry; round 3: retry during an in-flight broadcast gets 202, abort ends the confirmation wait at once) |
 | Chipnet | stage-1 scenario (covenant) and stage-2 scenario (402 server + agent), logs in `scripts/` |
 | Web UI, LLM agent with paid tools, mainnet | not started |
 

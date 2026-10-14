@@ -226,6 +226,10 @@ export class LeashPaywall {
     if (!v.ok) return this.challenge(route, v.reason);
     const rec = this.nonces.get(v.nonce)!;
     rec.state = 'pending'; // single-threaded: blocks a concurrent replay while the broadcast is in flight
+    // Known before the broadcast, so an identical retry arriving while it is in flight goes to resume()
+    // and gets 202, not "nonce already used" (Jules review round 3, 2026-10-14).
+    rec.txid = computeTxid(v.txHex);
+    rec.txHex = v.txHex.toLowerCase();
     let txid: string;
     try {
       txid = await this.cfg.provider.sendRawTransaction(v.txHex);
@@ -235,6 +239,8 @@ export class LeashPaywall {
       const known = isAlreadyKnown(e) ? await this.heldByNode(v.txHex) : undefined;
       if (!known) {
         rec.state = 'open';
+        rec.txid = undefined;
+        rec.txHex = undefined;
         const settle: SettlementResponse = { success: false, network: this.cfg.network, errorReason: `broadcast rejected: ${String(e?.message ?? e).slice(0, 300)}` };
         const r = this.challenge(route, settle.errorReason);
         return { ...r, headers: { ...r.headers, 'PAYMENT-RESPONSE': encodeHeader(settle) } };
