@@ -154,7 +154,7 @@ The `leash` scheme is ours (x402 `exact` for BCH allows only P2PKH inputs, so a 
   a rejected broadcast reopens the nonce;
 - optional `minConfirmations` (with a `confirmations(txid)` source, e.g. `electrumConfirmations(provider)`):
   broadcast, answer `202` + `PAYMENT-RESPONSE` (no new challenge), serve when the same payment is re-sent after
-  N confirmations; `leashFetch({ awaitConfirmations })` re-sends it and never pays twice. Not run on chipnet yet;
+  N confirmations; `leashFetch({ awaitConfirmations })` re-sends it and never pays twice. Run on chipnet with a real block, see below;
 - route prices below dust (546 sats) are refused at start; the nonce store is capped (`maxNonces`, default 10 000).
 
 The agent client (`leashFetch`) refuses prices above its `maxPrice`, payees outside the leash allow-list, and
@@ -171,6 +171,27 @@ rules: limit 6000 sats / 3 blocks, maxFee 2000, price 1500 sats:
 | replay the same payment header | 402 | `nonce already used` |
 | second call (`leashFetch`, chained on the unconfirmed state) | 200, state (0, 4410) | `21833be355ce1cec56fa58dbbd5059678965120114873eb6e8bbf9c8fc21838b` |
 | third call | refused by the SDK before signing | `limit exceeded: 4410 of 6000 sats spent in this window, 2205 requested (payment + fee), 1590 left` |
+
+Chipnet run with `minConfirmations: 1`, 14.10.2026 (`npx tsx scripts/x402-chipnet.ts run-conf`, same log
+`scripts/x402-chipnet-log.jsonl`, lines with `"step":"conf: ..."`). Server: `LeashPaywall` with
+`confirmations: electrumConfirmations(provider)` (verbose `blockchain.transaction.get` on the chipnet Fulcrum).
+Agent: `leashFetch` with `awaitConfirmations { intervalMs: 30 000, timeoutMs: 40 min }`.
+
+| Step | Result | txid / response |
+|---|---|---|
+| before | leash 15 590 sats, state (0, 4410), payee 13 000 sats, tip 327781 | state `21833be3...` |
+| GET /price without payment | 402 + challenge | nonce `37a6e1a6...` |
+| retry with payment, 02:09:54 UTC | 202 `awaiting 1 confirmation(s), have 0`, broadcast | `dcdc46634f8cd500cca59a3fe69d35908eab1d39a1442161aa389a8393f0b0ea` |
+| 14 re-sends of the same `PAYMENT-SIGNATURE`, every ~33 s | 202, server check `confirmations: 0` each time | same txid |
+| 15th re-send, 02:18:07 UTC, after block 327782 | 200, content, `PAYMENT-RESPONSE success: true` | mined at height 327782 |
+| balances after | handler ran 1 time; payee +1500 (one UTXO from that txid); leash -2206 = 1500 + fee 706, covenant `spent` = 2206 | |
+| re-send the served payment | 402 | `nonce already used`; leash state and payee balance unchanged |
+
+Wait from 202 to 200: 495 s (one chipnet block). What this run proves: the two-phase path works against a real
+node and a real block, the client re-sends one and the same payment (16 paid requests, one signature hash), the
+content is served once and the money moves once. Not covered here: a double spend while waiting (the payment
+is never confirmed, the nonce is dropped after `confirmTimeoutMs`), a reorg, `minConfirmations` > 1, a server
+restart during the wait (nonces live in memory, so a restarted server would not serve an already paid request).
 
 Known limits of the server: nonces live in memory (one process; a restart forgets open challenges);
 settlement is 0-conf by default (a payer could try a double spend before confirmation; double-spend proofs are not

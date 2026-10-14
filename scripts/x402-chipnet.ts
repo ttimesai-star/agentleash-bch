@@ -1,5 +1,6 @@
 // 402 paywall + agent on CHIPNET with real transactions. CHIPNET ONLY (refuses non-bchtest keys).
 //   npx tsx scripts/x402-chipnet.ts run        genesis (if needed) -> server -> agent pays 2 calls -> replay -> limit stop
+//   npx tsx scripts/x402-chipnet.ts run-conf   minConfirmations: 1 -> 202 -> real block -> same payment -> 200 once -> replay refused
 //   npx tsx scripts/x402-chipnet.ts status
 //   npx tsx scripts/x402-chipnet.ts withdraw   owner takes everything back
 // Keys: ~/.claude/secrets/bch_chipnet_wallets.json (alice=owner, bob=agent), bch_chipnet_agentleash_server.json (payee).
@@ -10,7 +11,7 @@ import type { AddressInfo } from 'node:net';
 import { binToHex, hexToBin, sha256 } from '@bitauth/libauth';
 import { ElectrumNetworkProvider, SignatureTemplate, type SpendableUtxo } from 'cashscript';
 import {
-  AgentLeash, LeashPaywall, buildGenesis, computeRequestHash, decodeHeader, encodeHeader, leashFetch, p2pkhLock, servePaywall,
+  AgentLeash, LeashPaywall, buildGenesis, electrumConfirmations, computeRequestHash, decodeHeader, encodeHeader, leashFetch, p2pkhLock, servePaywall,
   type LeashParams, type PaymentPayload, type PaymentRequired, type SettlementResponse,
 } from '../src/index.js';
 
@@ -119,6 +120,87 @@ if (cmd === 'status') {
   } catch (e: any) {
     log({ step: 'call 3: refused before signing', error: String(e?.message ?? e) });
   }
+  server.close();
+} else if (cmd === 'run-conf') {
+  // minConfirmations: 1 against a real chipnet block. pay -> 202 -> wait for a block -> same payment re-sent -> 200,
+  // content served once, money moved once; then the same payment again -> "nonce already used".
+  const leash = loadLeash();
+  const balance = async (addr: string) => (await provider.getUtxos(addr)).filter((u) => !u.token).reduce((s, u) => s + u.satoshis, 0n);
+  const st0 = await waitState(leash);
+  const before = { height: await provider.getBlockHeight(), leashValue: st0.satoshis, leashState: AgentLeash.stateOf(st0), payee: await balance(payee.address) };
+  log({ step: 'conf: before', ...before, stateTxid: st0.txid });
+
+  const electrum = electrumConfirmations(provider);
+  let checks = 0;
+  const confirmations = async (txid: string) => {
+    const n = await electrum(txid);
+    log({ step: 'conf: server confirmations check', n: ++checks, txid, confirmations: n, tip: await provider.getBlockHeight() });
+    return n;
+  };
+  let served = 0;
+  const paywall = new LeashPaywall({
+    network: 'bch:bchtest', payTo: payee.address, origin: 'http://127.0.0.1', provider, minConfirmations: 1, confirmations,
+    routes: [{ method: 'GET', path: '/price', price: PRICE, description: 'BCH price (demo)', handler: () => { served++; return { status: 200, body: '{"pair":"BCH/USD","note":"demo payload"}' }; } }],
+  });
+  const server = await servePaywall(paywall, 0);
+  const base = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
+
+  // Logs every request/response verbatim; a 202 stays a 202 so leashFetch re-sends the same payment.
+  const sent: string[] = [];
+  let t202: number | undefined;
+  const loggingFetch: typeof fetch = async (input, init) => {
+    const sig = (init?.headers as Record<string, string> | undefined)?.['PAYMENT-SIGNATURE'];
+    if (sig) sent.push(sig);
+    const res = await fetch(input, init);
+    const body = await res.clone().text();
+    const pr = res.headers.get('payment-response');
+    if (res.status === 202 && t202 === undefined) t202 = Date.now();
+    log({
+      step: `conf: agent ${sig ? 'paid request' : 'request'} -> ${res.status}`, status: res.status, body,
+      paymentSignatureSha256: sig ? binToHex(sha256.hash(new TextEncoder().encode(sig))) : undefined,
+      settlement: pr ? decodeHeader<SettlementResponse>(pr) : undefined, tip: await provider.getBlockHeight(),
+    });
+    return res;
+  };
+  const t0 = Date.now();
+  const r = await leashFetch(`${base}/price`, { method: 'GET' }, {
+    leash, agentPrivateKey: hexToBin(bob.privHex), network: 'bch:bchtest', maxPrice: 2_000n,
+    stateUtxo: async () => (await leash.getUtxos()).state!, elapsedAdd: ageOf, fetchImpl: loggingFetch,
+    awaitConfirmations: { intervalMs: 30_000, timeoutMs: 40 * 60_000 },
+  });
+  const txid = r.paid?.txid;
+  const minedAt = txid ? await provider.performRequest('blockchain.transaction.get_height', txid) as number : undefined;
+  log({
+    step: 'conf: leashFetch done', status: r.response.status, txid, minedAt, waitedSec: t202 ? Math.round((Date.now() - t202) / 1000) : undefined,
+    totalSec: Math.round((Date.now() - t0) / 1000), served, paidRequests: sent.length, sameSignature: new Set(sent).size === 1,
+  });
+  if (r.response.status !== 200 || !txid) { server.close(); process.exit(1); }
+
+  const st1 = await waitState(leash, txid);
+  const after = { height: await provider.getBlockHeight(), leashValue: st1.satoshis, leashState: AgentLeash.stateOf(st1), payee: await balance(payee.address) };
+  const leashDelta = before.leashValue - after.leashValue;
+  const payeeDelta = after.payee - before.payee;
+  // One debit: the state moved by exactly this txid (waitState above), the payee got PRICE once, and the leash lost
+  // PRICE + fee, which the covenant also recorded as spent (window was reset: age > period).
+  const fee = leashDelta - PRICE;
+  const payeeFromTx = (await provider.getUtxos(payee.address)).filter((u) => u.txid === txid);
+  log({
+    step: 'conf: after', ...after, leashDelta, payeeDelta, fee, spentInState: after.leashState.spent,
+    checks: {
+      servedOnce: served === 1, payeeGotPriceOnce: payeeDelta === PRICE && payeeFromTx.length === 1 && payeeFromTx[0].satoshis === PRICE,
+      leashDebitedOnce: fee > 0n && fee <= RULES.maxFee && after.leashState.spent === leashDelta, sameSignature: new Set(sent).size === 1,
+    },
+  });
+
+  // negative: the served payment re-sent once more
+  const again = await fetch(`${base}/price`, { headers: { 'PAYMENT-SIGNATURE': sent[0] } });
+  const againHdr = again.headers.get('payment-required');
+  const againErr = againHdr ? decodeHeader<PaymentRequired>(againHdr).error : `no PAYMENT-REQUIRED; body: ${await again.text()}`;
+  const st2 = await waitState(leash);
+  log({
+    step: 'conf: attack: re-send served payment', status: again.status, error: againErr, served,
+    leashUnchanged: st2.txid === st1.txid, payeeUnchanged: (await balance(payee.address)) === after.payee,
+  });
   server.close();
 } else if (cmd === 'withdraw') {
   const leash = loadLeash();
