@@ -16,8 +16,8 @@
 // Framework-free: `handle()` maps a plain request to a plain response, so it runs under node:http,
 // tests, or any other server.
 import { randomBytes } from 'node:crypto';
-import { binToHex, decodeTransaction, hexToBin } from '@bitauth/libauth';
-import type { NetworkProvider } from 'cashscript';
+import { binToHex, decodeTransaction, hexToBin, sha256 } from '@bitauth/libauth';
+import { NetworkProviderTransactionAlreadySubmittedError, type NetworkProvider } from 'cashscript';
 import { computeRequestHash, parseReceipt } from './receipt.js';
 import { DUST, lockingBytecodeOf } from './leash.js';
 
@@ -46,7 +46,10 @@ export interface PaywallConfig {
   provider: NetworkProvider;
   /** One-time nonce lifetime. Default 120 s. */
   nonceTtlMs?: number;
-  /** Most nonces held in memory; when full the oldest are evicted (never one being broadcast). Default 10 000. */
+  /**
+   * Most nonces held in memory; when full the oldest are evicted (never one being broadcast or paid and
+   * waiting). If every slot is in flight, new challenges get 429. Default 10 000.
+   */
   maxNonces?: number;
   /**
    * Confirmations required before content is served. Default 0: serve on mempool acceptance (a payer
@@ -90,6 +93,19 @@ export function electrumConfirmations(provider: { performRequest(name: string, .
     return typeof r?.confirmations === 'number' ? r.confirmations : 0;
   };
 }
+
+/** Transaction id: double SHA-256 of the serialized transaction, byte-reversed (display order). */
+export function computeTxid(txHex: string): string {
+  return binToHex(sha256.hash(sha256.hash(hexToBin(txHex))).reverse());
+}
+
+// Node reject codes for "this exact transaction is already known" (BCHN; same list as cashscript's
+// ElectrumNetworkProvider). Deliberately exact: a loose match such as "duplicate" would also hit
+// bad-txns-inputs-duplicate, an invalid transaction.
+const ALREADY_KNOWN = ['txn-already-in-mempool', 'txn-already-known', 'transaction already in block chain'];
+const isAlreadyKnown = (e: unknown): boolean =>
+  e instanceof NetworkProviderTransactionAlreadySubmittedError
+  || ALREADY_KNOWN.some((p) => String((e as { message?: unknown })?.message ?? e).toLowerCase().includes(p));
 
 export class LeashPaywall {
   readonly nonces = new Map<string, NonceRecord>();
@@ -149,6 +165,9 @@ export class LeashPaywall {
 
   private challenge(route: PaidRoute, error?: string): PlainResponse {
     this.pruneNonces();
+    if (this.nonces.size >= this.maxNonces) {
+      return { status: 429, headers: { 'content-type': 'application/json' }, body: JSON.stringify({ error: 'too many in-flight payments' }) };
+    }
     const nonce = randomBytes(16).toString('hex');
     const url = this.cfg.origin + route.path;
     this.nonces.set(nonce, { method: route.method.toUpperCase(), path: route.path, url, price: route.price, expires: this.now() + this.ttl, state: 'open' });
@@ -211,23 +230,50 @@ export class LeashPaywall {
     try {
       txid = await this.cfg.provider.sendRawTransaction(v.txHex);
     } catch (e: any) {
-      rec.state = 'open';
-      const settle: SettlementResponse = { success: false, network: this.cfg.network, errorReason: `broadcast rejected: ${String(e?.message ?? e).slice(0, 300)}` };
-      const r = this.challenge(route, settle.errorReason);
-      return { ...r, headers: { ...r.headers, 'PAYMENT-RESPONSE': encodeHeader(settle) } };
+      // The payer (or an earlier attempt) may already have broadcast this exact transaction. That is a
+      // payment, not a failure, but only if the node really holds it: the error text alone is not trusted.
+      const known = isAlreadyKnown(e) ? await this.heldByNode(v.txHex) : undefined;
+      if (!known) {
+        rec.state = 'open';
+        const settle: SettlementResponse = { success: false, network: this.cfg.network, errorReason: `broadcast rejected: ${String(e?.message ?? e).slice(0, 300)}` };
+        const r = this.challenge(route, settle.errorReason);
+        return { ...r, headers: { ...r.headers, 'PAYMENT-RESPONSE': encodeHeader(settle) } };
+      }
+      txid = known;
     }
+    rec.txid = txid;
+    rec.txHex = v.txHex.toLowerCase();
     if (this.minConf > 0) {
-      Object.assign(rec, { state: 'settling', txid, txHex: v.txHex.toLowerCase(), expires: this.now() + this.confirmTimeout });
+      Object.assign(rec, { state: 'settling', expires: this.now() + this.confirmTimeout });
       return this.awaiting(txid, 0);
     }
     return this.serve(req, route, rec, txid);
   }
 
+  /** txid if the node returns exactly this transaction (mempool or chain), else undefined. */
+  private async heldByNode(txHex: string): Promise<string | undefined> {
+    const txid = computeTxid(txHex);
+    try {
+      const raw = await this.cfg.provider.getRawTransaction(txid);
+      return typeof raw === 'string' && raw.toLowerCase() === txHex.toLowerCase() ? txid : undefined;
+    } catch {
+      return undefined;
+    }
+  }
+
   private async serve(req: PlainRequest, route: PaidRoute, rec: NonceRecord, txid: string): Promise<PlainResponse> {
+    // 'used' before the handler runs, so a concurrent replay during it still gets "nonce already used".
     rec.state = 'used';
-    const content = await route.handler(req);
-    const settle: SettlementResponse = { success: true, transaction: txid, network: this.cfg.network };
-    return { ...content, headers: { ...content.headers, 'PAYMENT-RESPONSE': encodeHeader(settle) } };
+    try {
+      const content = await route.handler(req);
+      const settle: SettlementResponse = { success: true, transaction: txid, network: this.cfg.network };
+      return { ...content, headers: { ...content.headers, 'PAYMENT-RESPONSE': encodeHeader(settle) } };
+    } catch (err) {
+      // The money has moved; the handler failed. Keep the nonce reserved so re-sending the same payment
+      // gets the content (via resume), instead of the payer losing it or paying twice.
+      Object.assign(rec, { state: 'settling', expires: Math.max(rec.expires, this.now() + this.confirmTimeout) });
+      throw err;
+    }
   }
 
   /** 202, not 402: the payment is made, so no new challenge that a generic x402 client would pay again. */
@@ -249,6 +295,7 @@ export class LeashPaywall {
     if (typeof tx !== 'string' || tx.toLowerCase() !== rec.txHex) return this.challenge(route, 'nonce is awaiting confirmation of another transaction');
     const txid = rec.txid!;
     if (rec.state === 'pending') return this.awaiting(txid, 0); // a concurrent retry is checking right now
+    if (this.minConf === 0) return this.serve(req, route, rec, txid); // broadcast already counted; retry after a handler failure
     rec.state = 'pending';
     let have = 0;
     try { have = await this.cfg.confirmations!(txid); } catch { have = 0; }

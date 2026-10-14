@@ -63,7 +63,13 @@ export async function leashFetch(url: string, init: RequestInit & { body?: strin
     const deadline = Date.now() + (o.awaitConfirmations.timeoutMs ?? 30 * 60_000);
     while (response.status === 202 && Date.now() < deadline) {
       await new Promise((r) => setTimeout(r, interval));
-      response = await f(url, paidInit);
+      try {
+        response = await f(url, paidInit);
+      } catch (e) {
+        // The payment is already made: a dropped poll is retried on the next interval, never paid again.
+        // A caller's abort still ends the wait.
+        if (init.signal?.aborted || (e as { name?: string })?.name === 'AbortError') throw e;
+      }
     }
   }
   const sr = response.headers.get('payment-response');

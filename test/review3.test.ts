@@ -198,6 +198,48 @@ describe('Jules 2026-10-13: minConfirmations (0-conf double-spend), two-phase', 
     const sig = await m.pay(challengeOf(await m.paywall.handle(get('/weather'))));
     expect((await m.paywall.handle(get('/weather', { 'payment-signature': sig }))).status).toBe(200);
   });
+
+  it('treats duplicate sendRawTransaction (already in mempool) as successfully broadcast', async () => {
+    const m = mk();
+    const sig = await m.pay(challengeOf(await m.paywall.handle(get('/weather'))));
+    // The payer broadcast it first, so the node holds this exact transaction.
+    await m.ctx.provider.sendRawTransaction(decodeHeader<PaymentPayload>(sig).payload.transaction);
+    m.ctx.provider.sendRawTransaction = async () => {
+      throw new Error('txn-already-in-mempool: transaction already in mempool');
+    };
+    const res = await m.paywall.handle(get('/weather', { 'payment-signature': sig }));
+    expect(res.status).toBe(200);
+    expect(m.served()).toBe(1);
+  });
+
+  it('reverts nonce state if route handler throws so payment is not permanently lost', async () => {
+    const ctx = setup();
+    ctx.addState(100_000n);
+    let attempts = 0;
+    const paywall = new LeashPaywall({
+      network: 'bch:bchtest', payTo: ctx.server.address, origin: ORIGIN, provider: ctx.provider,
+      routes: [{
+        method: 'GET', path: '/weather', price: 1_000n,
+        handler: () => {
+          attempts++;
+          if (attempts === 1) throw new Error('database connection lost');
+          return { status: 200, body: 'ok' };
+        },
+      }],
+    });
+    const pr = challengeOf(await paywall.handle(get('/weather')));
+    const a = pr.accepts[0];
+    const requestHash = computeRequestHash({ challengeNonce: a.extra.nonce, method: 'GET', url: pr.resource.url });
+    const tx = ctx.leash.buildPay({
+      stateUtxo: (await ctx.leash.getUtxos()).state!, agentPrivateKey: ctx.agent.priv, payTo: a.payTo, amount: BigInt(a.amount), requestHash, elapsedAdd: 0n,
+    });
+    const sig = encodeHeader({ x402Version: 2, accepted: a, payload: { transaction: tx.build() } } satisfies PaymentPayload);
+
+    await expect(paywall.handle(get('/weather', { 'payment-signature': sig }))).rejects.toThrow('database connection lost');
+    const retry = await paywall.handle(get('/weather', { 'payment-signature': sig }));
+    expect(retry.status).toBe(200);
+    expect(attempts).toBe(2);
+  });
 });
 
 describe('electrumConfirmations', () => {
