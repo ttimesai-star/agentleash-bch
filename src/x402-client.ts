@@ -34,6 +34,21 @@ export interface LeashFetchResult {
   paid?: { amount: bigint; txid?: string; settlement?: SettlementResponse; paymentSignature: string };
 }
 
+function mergeHeaders(existing: RequestInit['headers'], add: Record<string, string>): Record<string, string> {
+  const result: Record<string, string> = {};
+  if (existing) {
+    if (typeof (existing as Headers).entries === 'function') {
+      for (const [k, v] of (existing as Headers).entries()) result[k] = v;
+    } else if (Array.isArray(existing)) {
+      for (const [k, v] of existing as [string, string][]) result[k] = v;
+    } else if (typeof existing === 'object') {
+      for (const [k, v] of Object.entries(existing)) if (v !== undefined) result[k] = v;
+    }
+  }
+  for (const [k, v] of Object.entries(add)) result[k] = v;
+  return result;
+}
+
 export async function leashFetch(url: string, init: RequestInit & { body?: string }, o: LeashFetchOptions): Promise<LeashFetchResult> {
   const f = o.fetchImpl ?? fetch;
   const first = await f(url, init);
@@ -56,7 +71,7 @@ export async function leashFetch(url: string, init: RequestInit & { body?: strin
   });
   const payload: PaymentPayload = { x402Version: X402_VERSION, accepted: req, payload: { transaction: tx.build() } };
   const paymentSignature = encodeHeader(payload);
-  const paidInit = { ...init, headers: { ...(init.headers as Record<string, string> | undefined), 'PAYMENT-SIGNATURE': paymentSignature } };
+  const paidInit = { ...init, headers: mergeHeaders(init.headers, { 'PAYMENT-SIGNATURE': paymentSignature }) };
   let response = await f(url, paidInit);
   if (response.status === 202 && o.awaitConfirmations) {
     const interval = o.awaitConfirmations.intervalMs ?? 30_000;

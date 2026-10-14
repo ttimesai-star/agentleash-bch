@@ -89,8 +89,12 @@ interface NonceRecord {
 /** Confirmations source for `PaywallConfig.confirmations` over Electrum/Fulcrum (verbose transaction.get). */
 export function electrumConfirmations(provider: { performRequest(name: string, ...p: (string | number | boolean)[]): Promise<unknown> }) {
   return async (txid: string): Promise<number> => {
-    const r = await provider.performRequest('blockchain.transaction.get', txid, true) as { confirmations?: number } | undefined;
-    return typeof r?.confirmations === 'number' ? r.confirmations : 0;
+    try {
+      const r = await provider.performRequest('blockchain.transaction.get', txid, true) as { confirmations?: number } | undefined;
+      return typeof r?.confirmations === 'number' && r.confirmations > 0 ? Math.floor(r.confirmations) : 0;
+    } catch {
+      return 0;
+    }
   };
 }
 
@@ -151,9 +155,11 @@ export class LeashPaywall {
     const now = this.now();
     for (const [k, v] of this.nonces) {
       if (v.state === 'pending') continue;
-      if (v.state === 'settling') { if (v.expires < now) this.nonces.delete(k); continue; }
-      if (v.expires >= now) break;
-      this.nonces.delete(k);
+      if (v.expires < now) {
+        this.nonces.delete(k);
+        continue;
+      }
+      if (v.state === 'open') break;
     }
     if (this.nonces.size < this.maxNonces) return;
     for (const [k, v] of this.nonces) {

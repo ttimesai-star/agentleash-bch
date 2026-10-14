@@ -4,7 +4,7 @@ import { afterAll, describe, expect, it } from 'vitest';
 import type { AddressInfo } from 'node:net';
 import type { Server } from 'node:http';
 import {
-  LeashPaywall, LimitExceededError, computeRequestHash, decodeHeader, encodeHeader, leashFetch, servePaywall,
+  LeashPaywall, LimitExceededError, computeRequestHash, decodeHeader, electrumConfirmations, encodeHeader, leashFetch, servePaywall,
   type PaymentPayload, type PaymentRequired, type PlainRequest, type SettlementResponse,
 } from '../src/index.js';
 import { H, rawPay, receiptOut, setup, stateOut } from './helpers.js';
@@ -199,6 +199,91 @@ describe('agent client over real HTTP (node:http)', () => {
         stateUtxo: async () => (await ctx.leash.getUtxos()).state!, elapsedAdd: async () => 0n,
       })).rejects.toThrow(/not on this leash's allow-list/);
     } finally { s.close(); }
+  });
+});
+
+describe('Review fixes: pruneNonces, electrumConfirmations, leashFetch headers', () => {
+  it('pruneNonces cleans up expired open nonces following settling nonces', async () => {
+    let now = 1_000_000;
+    const ctx = setup();
+    ctx.addState(100_000n);
+    const paywall = new LeashPaywall({
+      network: 'bch:bchtest', payTo: ctx.server.address, origin: ORIGIN, provider: ctx.provider,
+      now: () => now, minConfirmations: 1, confirmations: async () => 0,
+      routes: [{ method: 'GET', path: '/weather', price: 1_000n, handler: () => ({ status: 200, body: 'ok' }) }],
+    });
+
+    const pr1 = challengeOf(await paywall.handle(req('/weather')));
+    const nonce1 = pr1.accepts[0].extra.nonce;
+    const a1 = pr1.accepts[0];
+    const requestHash1 = computeRequestHash({ challengeNonce: a1.extra.nonce, method: 'GET', url: pr1.resource.url });
+    const tx1 = ctx.leash.buildPay({ stateUtxo: (await ctx.leash.getUtxos()).state!, agentPrivateKey: ctx.agent.priv, payTo: a1.payTo, amount: 1000n, requestHash: requestHash1, elapsedAdd: 0n });
+    const sig1 = encodeHeader({ x402Version: 2, accepted: a1, payload: { transaction: tx1.build() } });
+    await paywall.handle(req('/weather', sig1));
+    expect(paywall.nonces.get(nonce1)!.state).toBe('settling');
+
+    now += 10_000;
+    const pr2 = challengeOf(await paywall.handle(req('/weather')));
+    const nonce2 = pr2.accepts[0].extra.nonce;
+    expect(paywall.nonces.has(nonce2)).toBe(true);
+
+    now += 130_000;
+    await paywall.handle(req('/weather'));
+
+    expect(paywall.nonces.has(nonce1)).toBe(true);
+    expect(paywall.nonces.has(nonce2)).toBe(false);
+  });
+
+  it('electrumConfirmations returns 0 on provider error or invalid result', async () => {
+    const throwingProvider = {
+      performRequest: async () => { throw new Error('Electrum RPC error'); },
+    };
+    const confFn1 = electrumConfirmations(throwingProvider);
+    expect(await confFn1('1234')).toBe(0);
+
+    const nullProvider = {
+      performRequest: async () => undefined,
+    };
+    const confFn2 = electrumConfirmations(nullProvider);
+    expect(await confFn2('1234')).toBe(0);
+
+    const validProvider = {
+      performRequest: async () => ({ confirmations: 3.8 }),
+    };
+    const confFn3 = electrumConfirmations(validProvider);
+    expect(await confFn3('1234')).toBe(3);
+  });
+
+  it('leashFetch preserves headers passed as Headers instance or tuple array', async () => {
+    const m = mk({ price: 1_000n });
+    const server = await servePaywall(m.paywall, 0);
+    const base = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
+    try {
+      const recordedHeaders: Record<string, string>[] = [];
+      const customFetch: typeof fetch = async (url, init) => {
+        if (init?.headers) {
+          const h = init.headers as Record<string, string>;
+          recordedHeaders.push(h);
+        }
+        return fetch(url, init);
+      };
+
+      const opts = {
+        leash: m.ctx.leash, agentPrivateKey: m.ctx.agent.priv, network: 'bch:bchtest' as const, maxPrice: 5_000n,
+        stateUtxo: m.state, elapsedAdd: async () => 0n, fetchImpl: customFetch,
+      };
+
+      const headersInst = new Headers();
+      headersInst.set('x-custom-header', 'test-value');
+      const r = await leashFetch(`${base}/weather`, { method: 'GET', headers: headersInst }, opts);
+      expect(r.response.status).toBe(200);
+
+      const paidReqHeader = recordedHeaders.find((h) => h['PAYMENT-SIGNATURE']);
+      expect(paidReqHeader).toBeDefined();
+      expect(paidReqHeader!['x-custom-header']).toBe('test-value');
+    } finally {
+      server.close();
+    }
   });
 });
 

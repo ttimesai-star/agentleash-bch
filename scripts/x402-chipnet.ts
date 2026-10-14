@@ -19,7 +19,11 @@ const SECRETS = `${homedir()}/.claude/secrets`;
 const W = JSON.parse(readFileSync(`${SECRETS}/bch_chipnet_wallets.json`, 'utf8'));
 const [alice, bob] = W.wallets;
 const payee = JSON.parse(readFileSync(`${SECRETS}/bch_chipnet_agentleash_server.json`, 'utf8'));
-for (const w of [alice, bob, payee]) if (!w.address.startsWith('bchtest:')) throw new Error('refusing: not a testnet wallet');
+for (const w of [...W.wallets, payee]) {
+  if (!w?.address || typeof w.address !== 'string' || !w.address.startsWith('bchtest:')) {
+    throw new Error('refusing: not a testnet wallet');
+  }
+}
 
 const STATE_FILE = new URL('./x402-chipnet-state.json', import.meta.url);
 const LOG_FILE = new URL('./x402-chipnet-log.jsonl', import.meta.url);
