@@ -11,13 +11,13 @@ Built for BCH BLAZE 2026. License: MIT.
 **Prototype, unaudited. Chipnet only. Do not put real money in it.** No external users yet; no
 professional audit; the contract is not frozen.
 
-| Part | State (13.10.2026) |
+| Part | State (15.10.2026) |
 |---|---|
 | `contracts/AgentLeash.cash` (CashScript 0.14) | v0. Two automated review passes (Jules, `REVIEW.md`), not a professional audit. Not frozen. |
 | TypeScript SDK (`src/`) | genesis, pay, top-up, withdraw, receipt + request-hash helpers |
-| WizardConnect owner path (`src/wc.ts`) | sign-request builder, relay serialization, reference signer for tests, VM verification. Live relay round trip PASS. **Not yet tested with a real wallet app** (see below). |
+| WizardConnect owner path (`src/wc.ts`) | sign-request builder, relay serialization, reference signer for tests, VM verification. Live relay round trip PASS. Paytaca's own signing code (pinned commit) signs genesis, top-up and withdraw, offline and over the relay through Paytaca's own connection manager: PASS. **The Paytaca app on a phone is not yet tested** (UI only, see below). |
 | 402 paywall, `leash` scheme (`src/x402.ts`, `src/x402-client.ts`, `src/http.ts`) | works on mock and on chipnet (real transactions, see below). `exact` scheme not implemented and not advertised. |
-| Tests (vitest, MockNetworkProvider with validation) | **150**: 94 stage-1 (happy paths, 29 attacks, owner path, property test, 39 from two review passes) + 7 WizardConnect + 49 paywall/agent (incl. Jules review fixes: dust floor, nonce cap, header case, minConfirmations; round 2: "already known" broadcast checked against the node, handler failure after payment, 429 when every nonce is in flight, poll retry; round 3: retry during an in-flight broadcast gets 202, abort ends the confirmation wait at once; round 4: Electrum confirmation errors count as 0, Headers/tuple request headers kept) |
+| Tests (vitest, MockNetworkProvider with validation) | **151**: 94 stage-1 (happy paths, 29 attacks, owner path, property test, 39 from two review passes) + 8 WizardConnect + 49 paywall/agent (incl. Jules review fixes: dust floor, nonce cap, header case, minConfirmations; round 2: "already known" broadcast checked against the node, handler failure after payment, 429 when every nonce is in flight, poll retry; round 3: retry during an in-flight broadcast gets 202, abort ends the confirmation wait at once; round 4: Electrum confirmation errors count as 0, Headers/tuple request headers kept) |
 | Chipnet | stage-1 scenario (covenant) and stage-2 scenario (402 server + agent), logs in `scripts/` |
 | Web UI, LLM agent with paid tools, mainnet | not started |
 
@@ -213,10 +213,12 @@ own P2PKH input. The agent signs `pay` with its own key.
 | Can a wallet sign our owner-path transactions? | Per spec yes: the wallet signs the inputs named in `inputPaths` with `SIGHASH_ALL, UTXOS, FORKID` (0x61); contract inputs with pre-set unlocking bytecode may be omitted | `docs/protocol.md`, `docs/wallet.md` in the repo |
 | Does the state NFT survive the relay? | Yes, `sourceOutputToRelay` keeps category, amount, capability, commitment | `@wizardconnect/core` 0.2.4 `hdwalletv1-serialize.js`; test `withdraw: wallet signs only its input` |
 | Network (chipnet) field in the protocol? | None. The wallet decides; the xpub version shows it | `@wizardconnect/core` types |
-| Paytaca | Open-source WizardConnect code: chipnet mode (`bchtest` prefix, testnet xpub), signs P2PKH inputs from `inputPaths` with 0x61, leaves other inputs untouched, accepts token source outputs | [paytaca-app `src/wallet/wizardconnect/service.js`](https://github.com/paytaca/paytaca-app/blob/master/src/wallet/wizardconnect/service.js), [`src/wallet/bch-sign.js`](https://github.com/paytaca/paytaca-app/blob/master/src/wallet/bch-sign.js) |
+| Paytaca | Open-source WizardConnect code: chipnet mode (Settings -> "Use Chipnet Network": `bchtest` prefix, testnet xpub), signs P2PKH inputs from `inputPaths` with 0x61, leaves other inputs untouched, accepts token source outputs; Apps -> WizardConnect accepts a pasted `wiz://` URI | [paytaca-app `src/wallet/wizardconnect/service.js`](https://github.com/paytaca/paytaca-app/blob/master/src/wallet/wizardconnect/service.js), [`src/wallet/bch-sign.js`](https://github.com/paytaca/paytaca-app/blob/master/src/wallet/bch-sign.js) |
 | Selene | Listed as a WizardConnect wallet; source not found, chipnet support **unknown** | [Riften wallet table](https://docs.riftenlabs.com/cauldron/wallets) |
 | Relay transport with our transactions | **PASS** 13.10.2026: dapp and a headless test wallet over `wss://relay.riften.net` + `wss://relay.cauldron.quest`: handshake, xpub, sign request/response for a withdraw carrying the state NFT, VM-verified | `npx tsx scripts/wc-relay-smoke.ts` |
-| A real wallet app signing our request | **NOT TESTED** (needs Paytaca on a phone or the Paytaca browser extension, chipnet mode) | open item, first task of the next step |
+| Paytaca's signing code on our requests | **PASS** 15.10.2026: `service.js` `signRequest` + `bch-sign.js` from paytaca-app commit `bfeaefe9` (sha256 printed by the script; files downloaded, not vendored: the repo has no licence) sign genesis, top-up and withdraw in chipnet mode; all three pass the BCH 2026 VM. With `--relay`, Paytaca's own `getManager()` (its adapter, `@wizardconnect/wallet`) answers our dapp over the public relays, also when it joins 45 s late | `npx tsx scripts/paytaca-compat.ts --relay --late 45` |
+| What Paytaca does NOT check | An `inputPath` that names the contract input is not refused: the relay drops the `contract` field, the input already has an unlocking bytecode, so Paytaca signs nothing and returns the transaction with the owner input unsigned. Duplicate indices are not refused either. The dapp must run `verifySigned` before broadcasting (our builder and reference signer refuse both cases) | `scripts/paytaca-compat.ts` negative check; `test/wc.test.ts` |
+| The Paytaca app on a phone (UI: pairing, approval dialog, release build) | **NOT TESTED**. One manual run: `npx tsx scripts/paytaca-compat.ts --phone` prints a `wiz://` URI, the phone pastes it, approves 3 requests over mock coins (nothing is broadcast); answers are VM-verified and logged to `scripts/paytaca-phone-log.jsonl` | open item |
 
 Security notes from the tests: with `SIGHASH_UTXOS`, a dapp that lies to the wallet about the state NFT gets a
 signature the network rejects; the reference signer refuses an input path that is not the wallet's own P2PKH.
@@ -231,6 +233,7 @@ npm run compile     # cashc -> artifacts/
 npx tsx scripts/chipnet.ts status|genesis|pay <sats>|attack <kind>|withdraw
 npx tsx scripts/x402-chipnet.ts status|run|withdraw   # 402 server + agent on chipnet
 npx tsx scripts/wc-relay-smoke.ts                     # WizardConnect relay round trip
+npx tsx scripts/paytaca-compat.ts [--relay [--late 45] | --phone]  # Paytaca's own signer on our requests
 ```
 
 ```ts
@@ -249,11 +252,28 @@ await tx.send();
 `buildPay` mirrors the contract off-chain and throws `LimitExceededError` with "N left, resets in ~M blocks"
 before anything is signed, so an agent gets a readable reason instead of a node error.
 
+## Demo script (what the submission video shows)
+
+Every scene is a command that already runs on chipnet today; the web UI (planned 18-24.10) only puts buttons on
+the same calls. Each scene ends on a txid or a verbatim node error from the logs in `scripts/`.
+
+| # | Scene | Command | What the viewer sees |
+|---|---|---|---|
+| 1 | Owner creates a leash: 6000 sats per 3 blocks, one allowed payee, fee cap 2000 | `scripts/chipnet.ts genesis` (later: the web UI + Paytaca over WizardConnect) | genesis txid, state NFT (0, 0) |
+| 2 | Agent buys an answer from a paid API | `scripts/x402-chipnet.ts run` | 402 + challenge, the agent pays from the leash, 200 + `PAYMENT-RESPONSE` txid; replaying the same header gets `nonce already used` |
+| 3 | Agent asks for more than the window allows | same run, third call | refused **before signing**: `limit exceeded: 4410 of 6000 sats spent ... 1590 left` |
+| 4 | A compromised agent tries to cheat the network directly | `scripts/chipnet.ts attack <kind>` (overspend, recipient, fee, clock, fakereset) | five raw transactions, five node rejections (`mandatory-script-verify-flag-failed`, `non-BIP68-final`) |
+| 5 | The window resets after 3 blocks | `scripts/chipnet.ts pay 3000` after 3 blocks | accepted, state (0, 3705) |
+| 6 | Owner pulls the plug without the agent's key | `scripts/chipnet.ts withdraw` (later: Paytaca approves the withdraw) | withdraw txid, NFT burned, agent has nothing left to spend |
+
+Before the video: scenes 1 and 6 signed in the Paytaca app (not yet done), and scenes 1-6 repeated once on mainnet
+with a leash of at most ~10 USD (01-10.11).
+
 ## Plan to BCH BLAZE submission (21.11.2026 16:00 Minsk)
 
 | Dates | Step | Done when |
 |---|---|---|
-| 14-17.10 | Real wallet: Paytaca (chipnet) signs genesis, top-up and withdraw built by `toWizardSignRequest`; try Selene | 3 chipnet txids signed in the app, or a documented blocker with the wallet's error text |
+| 14-17.10 | Real wallet: Paytaca (chipnet) signs genesis, top-up and withdraw built by `toWizardSignRequest`; try Selene | Paytaca's signing code and connection manager: PASS 15.10 (`scripts/paytaca-compat.ts`). Left: one run with the app on a phone (`--phone`), then real chipnet txids signed in the app |
 | 18-24.10 | Web UI (Vite + React, `@wizardconnect/react`): connect, create, fund, withdraw, journal, "try to break it"; separate browser entry point | live page on chipnet |
 | 18-24.10 | `exact` scheme next to `leash`, checked against `@x402/bch` | interop test passes |
 | 25-30.10 | LLM agent with three paid tools; Jules review #3, a second-vendor review, Semgrep / npm audit / gitleaks | findings fixed or documented |

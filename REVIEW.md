@@ -165,3 +165,17 @@ Several low and informational findings were identified in SDK edge cases, transa
 | AL-06 | **Fixed.** `buildWithdraw` forwards stray token UTXOs to a required `ownerTokenAddress` instead of burning them, and refuses without it. Test `withdraw forwards stray tokens to the owner instead of burning them (Jules AL-06)`. |
 | AL-07, AL-10 | No change; defended. |
 | AL-08, AL-09 | Documented as owner-side requirements in README ("Known properties and limits"). |
+
+---
+
+## Review log, stage 2 (402 paywall, WizardConnect), 13-15.10.2026
+
+Every Jules patch was read, re-tested and either applied, rewritten or rejected; the commit message names what was
+changed and why. Sessions are on jules.google.com/session/<id>.
+
+| Jules session | Scope | Outcome |
+|---|---|---|
+| 4474447409157392796 | stage 2 security review (x402 server, WizardConnect) | dust floor `7781d93`, header case `cc7dba0`, nonce cap `b457421`, `minConfirmations` rewritten `db4164b` (the patch read a `utxo.height` field cashscript does not have, so payments were never served); duplicate / fractional `inputPaths` indices refused on both sides 15.10 (was left out on 13.10) |
+| 12902502665375009200 | hardening `7781d93..db4164b` | `177831c`: txid, 429 when every nonce is in flight, poll retry accepted; "already known" broadcast and handler failure rewritten (the patch's substring match on "duplicate" also matched `bad-txns-inputs-duplicate` and would have served content for an invalid tx) |
+| 3258987019283182858 | round-2 rework `cd7e729..177831c` | `e46d5d8`: retry during an in-flight broadcast gets 202, abortable confirmation wait |
+| 3569125901430821836 | chipnet `minConfirmations` run | `4dce950`: Electrum errors count as 0 confirmations, Headers/tuple request headers kept, stricter testnet key guard |
