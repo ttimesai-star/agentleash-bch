@@ -1,0 +1,2 @@
+{"at":"2026-10-15T21:50:06.943Z","label":"self-send (vout 0 for genesis)","ok":true,"txid":"fa7ea9341e83a582c388fad05f54ca525f1188316c5ca30dcd746ac21abce85c"}
+{"at":"2026-10-15T21:50:08.016Z","label":"demo genesis","ok":true,"txid":"a4675bc1f9144cd05327aede4b2349633b0f5184b77bdf27234ba65e7569c2e0","category":"fa7ea9341e83a582c388fad05f54ca525f1188316c5ca30dcd746ac21abce85c","leash":"bchtest:rw2x8a46d9xm0u8zqxyfej0n04znxglu6a4twu53rfkx5pgpasw3sva873j5u","rules":{"limit":"12000","period":"6","maxFee":"2000"},"fund":"300000"}

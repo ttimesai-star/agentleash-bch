@@ -8,7 +8,10 @@
     "compile": "cashc contracts/AgentLeash.cash -f ts -o artifacts/AgentLeash.artifact.ts && cashc contracts/AgentLeash.cash -o artifacts/AgentLeash.json",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
-    "chipnet": "tsx scripts/chipnet.ts"
+    "chipnet": "tsx scripts/chipnet.ts",
+    "web:dev": "vite web",
+    "web:build": "tsc -p web/tsconfig.json && vite build web",
+    "web:typecheck": "tsc -p web/tsconfig.json"
   },
   "author": "ttimesai-star",
   "license": "MIT",
@@ -23,6 +26,7 @@
     "@types/node": "^26.6.5",
     "@wizardconnect/wallet": "^0.2.3",
     "cashc": "^0.14.0",
+    "qrcode-generator": "^2.0.4",
     "tsx": "^4.23.15",
     "typescript": "^7.0.2",
     "vitest": "^5.0.3"

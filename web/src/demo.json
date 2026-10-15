@@ -1,0 +1,20 @@
+{
+  "chipnet": {
+    "id": "chipnet:fa7ea9341e83a582c388fad05f54ca525f1188316c5ca30dcd746ac21abce85c",
+    "net": "chipnet",
+    "label": "Public demo agent (chipnet)",
+    "publicDemo": true,
+    "stateCategory": "fa7ea9341e83a582c388fad05f54ca525f1188316c5ca30dcd746ac21abce85c",
+    "agentPkh": "31f0fe4422751212fa9ef85bee458523d893c359",
+    "ownerLock": "76a9144438d99271c8e71aac23a3ed953d2fd60532c75588ac",
+    "allow": [
+      "76a91430247145d4d2e1839b3d77c8ccf05f416d42f20688ac"
+    ],
+    "limit": "12000",
+    "period": "6",
+    "maxFee": "2000",
+    "agentPriv": "8ad8db6c0db253d8ca64faf4be64705c79f607ab908f75cadd516ba59e1434ec",
+    "genesisTxid": "a4675bc1f9144cd05327aede4b2349633b0f5184b77bdf27234ba65e7569c2e0",
+    "createdAt": "2026-10-15T21:50:08.020Z"
+  }
+}

@@ -1,0 +1,145 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>AgentLeash: a spending leash for AI agents on Bitcoin Cash</title>
+  <meta name="description" content="Give your AI agent a wallet it cannot run away with. A CashScript covenant enforces the budget, the payees and the pace; the agent pays tools over x402; the owner pulls the plug any time." />
+  <link rel="icon" href="./icon.svg" type="image/svg+xml" />
+  <meta property="og:title" content="AgentLeash (BCH)" />
+  <meta property="og:description" content="The agent signs. The network enforces the budget. You pull the plug." />
+</head>
+<body>
+  <header class="top">
+    <div class="wrap top-inner">
+      <a class="brand" href="./">
+        <img src="./icon.svg" alt="" width="28" height="28" />
+        <span>AgentLeash</span>
+      </a>
+      <div class="netswitch" role="group" aria-label="Network">
+        <button data-net="chipnet">Chipnet</button>
+        <button data-net="mainnet">Mainnet</button>
+      </div>
+      <a class="gh" href="https://github.com/ttimesai-star/agentleash-bch" target="_blank" rel="noopener">GitHub</a>
+    </div>
+  </header>
+
+  <main>
+    <section class="hero wrap">
+      <div class="badge-row">
+        <span class="badge">CashScript covenant</span><span class="badge">x402 payments</span><span class="badge">WizardConnect</span>
+      </div>
+      <h1>Give your AI agent a wallet<br />it <em>cannot</em> run away with.</h1>
+      <p class="lead">The agent signs its own payments. The <b>Bitcoin Cash network</b>, not a server and not the agent's code,
+        enforces how much it may spend, to whom, and how fast. The owner can take everything back at any time, without the agent's key.</p>
+      <div class="cta">
+        <a class="btn primary lg" href="#console">Try the public demo leash</a>
+        <a class="btn lg" href="#create">Create your own</a>
+      </div>
+      <p id="net-note" class="note"></p>
+      <p class="honest">Prototype, unaudited. Built for BCH BLAZE 2026. The demo runs on chipnet with test coins.</p>
+    </section>
+
+    <section class="how wrap">
+      <div class="how-card"><span class="num">1</span><h3>Owner sets the rules</h3><p>Budget per window of blocks, up to three allowed payees, a fee cap. The rules are the contract's address: they cannot drift.</p></div>
+      <div class="how-card"><span class="num">2</span><h3>Agent pays for tools</h3><p>A tool answers <code>402 Payment Required</code>; the agent signs a covenant payment with an on-chain receipt bound to the request; the tool serves.</p></div>
+      <div class="how-card"><span class="num">3</span><h3>The network says no</h3><p>Over budget, unknown payee, fee drain, a faked clock: every node rejects it. Even with the agent key in hand.</p></div>
+    </section>
+
+    <section id="console" class="wrap panel">
+      <div class="panel-head">
+        <div>
+          <h2>Agent console</h2>
+          <p class="muted">Pick a leash. The public demo leash's agent key is published: you are the agent. Try to steal the money.</p>
+        </div>
+        <div class="row gap">
+          <select id="leash-select" class="input"></select>
+          <button id="refresh" class="btn ghost sm" title="Read the chain again">Refresh</button>
+        </div>
+      </div>
+      <div class="muted small" id="leash-status"></div>
+      <div class="grid2">
+        <div class="card" id="leash-card"></div>
+        <div class="card">
+          <div class="eyebrow">Paid tools · x402 <code>leash</code> scheme</div>
+          <h3>Let the agent buy something</h3>
+          <div id="agent-tools"></div>
+          <div id="flow" class="flow"></div>
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="eyebrow">Try to break it</div>
+        <h3>Sign as a compromised agent. Broadcast. Watch the network refuse.</h3>
+        <p class="muted small">Each button signs a real transaction with the agent key that breaks exactly one rule, and sends it to the network. The SDK would refuse to build these, so they are built raw.</p>
+        <div id="attacks" class="attacks"></div>
+      </div>
+
+      <div class="card">
+        <div class="eyebrow">Journal</div>
+        <h3>Everything that touched this leash</h3>
+        <div id="journal" class="table-wrap"></div>
+      </div>
+
+      <div class="card">
+        <div class="eyebrow">Owner</div>
+        <h3>Pull the plug</h3>
+        <div id="owner-actions"></div>
+      </div>
+    </section>
+
+    <section id="create" class="wrap panel">
+      <div class="panel-head">
+        <div>
+          <h2>Create your own leash</h2>
+          <p class="muted">Two steps: connect the owner's wallet, set the rules. The agent key is generated in this browser.</p>
+        </div>
+      </div>
+      <div class="grid2">
+        <div class="card">
+          <div class="eyebrow">Step 1</div>
+          <h3>Connect the owner</h3>
+          <div id="owner-box"></div>
+        </div>
+        <div class="card" id="create-form">
+          <div class="eyebrow">Step 2</div>
+          <h3>Set the rules</h3>
+          <label>Name <input id="f-label" class="input" value="Research agent" maxlength="40" /></label>
+          <div class="form2">
+            <label>Budget per window (sats) <input id="f-limit" class="input" value="10000" inputmode="numeric" /></label>
+            <label>Window (blocks, ~10 min each) <input id="f-period" class="input" value="6" inputmode="numeric" /></label>
+            <label>Max miner fee per payment (sats) <input id="f-maxfee" class="input" value="2000" inputmode="numeric" /></label>
+            <label>Fund the leash with (sats) <input id="f-fund" class="input" value="50000" inputmode="numeric" /></label>
+          </div>
+          <label>Allowed payees (1 to 3). The first one is the demo tool server.
+            <input id="payee-1" class="input payee mono" />
+            <input class="input payee mono" placeholder="optional second payee" />
+            <input class="input payee mono" placeholder="optional third payee" />
+          </label>
+          <button id="create-btn" class="btn primary">Create leash</button>
+          <div id="create-progress" class="flow"></div>
+        </div>
+      </div>
+    </section>
+
+    <section class="wrap panel faq">
+      <h2>Why it holds</h2>
+      <div class="grid3">
+        <div><h4>Fees count</h4><p>The budget counts everything that leaves the contract, payment plus miner fee, so many tiny payments cannot burn the balance as fees.</p></div>
+        <div><h4>A clock the agent cannot rush</h4><p>The window only advances by block age that the network proves (relative locktime, BIP68). Values that CSV would mask are refused.</p></div>
+        <div><h4>Receipts</h4><p>Every payment carries <code>OP_RETURN "LSH1" sha256(nonce | method | url | body)</code>: which HTTP request it paid for is on chain.</p></div>
+        <div><h4>Owner path</h4><p>Any transaction that also spends a coin of the owner's address may move the funds: withdraw, top up, migrate. No agent key needed.</p></div>
+        <div><h4>Tested like an attacker</h4><p>Over 150 tests including 29 attacks with the exact rejection text, a property test of the 2&times; window bound, and two external reviews.</p></div>
+        <div><h4>Honest limits</h4><p>Fixed window (worst case 2&times; limit around a reset); one payment chain at a time; 0-conf settlement by default. Prototype, unaudited.</p></div>
+      </div>
+    </section>
+  </main>
+
+  <footer class="wrap foot">
+    <span>AgentLeash · MIT · <a href="https://github.com/ttimesai-star/agentleash-bch" target="_blank" rel="noopener">source &amp; tests</a></span>
+    <span class="muted">Not financial software. Prototype, unaudited.</span>
+  </footer>
+  <div id="toasts"></div>
+  <script type="module" src="./src/main.ts"></script>
+</body>
+</html>
