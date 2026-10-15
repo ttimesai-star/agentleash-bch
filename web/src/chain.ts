@@ -78,15 +78,16 @@ export async function journal(leash: AgentLeash, net: NetConfig, limit = 40): Pr
   const byHeight = [...hist].sort((a, b) => (a.height <= 0 ? 1e12 : a.height) - (b.height <= 0 ? 1e12 : b.height)).slice(-limit);
   const txs = new Map<string, Awaited<ReturnType<typeof getTx>>>();
   for (const h of byHeight) txs.set(h.tx_hash, await getTx(provider, h.tx_hash));
-  // Mempool entries all have height 0, so their order is arbitrary: put every tx after the txs it spends
-  // (a chain of unconfirmed payments is normal for one state coin).
+  // Within one block, and in the mempool (height 0 / -1), the server's order is arbitrary: put every tx after
+  // the txs it spends (a chain of payments from one state coin is normal).
   const sorted: typeof byHeight = [];
   const placed = new Set<string>();
   const visit = (h: (typeof byHeight)[number], depth = 0) => {
     if (placed.has(h.tx_hash) || depth > byHeight.length) return;
     for (const i of txs.get(h.tx_hash)!.inputs) {
       const parent = byHeight.find((x) => x.tx_hash === binToHex(i.outpointTransactionHash));
-      if (parent && parent.height <= 0 && h.height <= 0) visit(parent, depth + 1);
+      const sameSlot = parent && (parent.height === h.height || (parent.height <= 0 && h.height <= 0));
+      if (parent && sameSlot) visit(parent, depth + 1);
     }
     if (!placed.has(h.tx_hash)) { placed.add(h.tx_hash); sorted.push(h); }
   };
