@@ -27,18 +27,33 @@ export type InputPath = [inputIndex: number, pathName: string, addressIndex: num
 export type WizardSignPayload = Pick<SignTransactionRequest, 'transaction' | 'inputPaths'>;
 
 /**
+ * Shape check shared by the dapp side and the reference signer: at least one path, every index an
+ * integer inside the input list, no index named twice (Jules review 4474447409157392796). A duplicate
+ * is harmless for our signer (same signature twice) but undefined for real wallets, and a fractional
+ * index used to surface as a TypeError instead of a readable refusal.
+ */
+export function checkInputPaths(inputPaths: InputPath[], inputCount: number): void {
+  if (!Array.isArray(inputPaths) || inputPaths.length === 0) throw new Error('inputPaths must name at least one wallet input');
+  const seen = new Set<number>();
+  for (const [i] of inputPaths) {
+    if (!Number.isInteger(i) || i < 0 || i >= inputCount) throw new Error(`inputPath index ${i} out of range`);
+    if (seen.has(i)) throw new Error(`duplicate input index ${i} in inputPaths`);
+    seen.add(i);
+  }
+}
+
+/**
  * Turn an unsigned CashScript TransactionBuilder (owner input added with `placeholderP2PKHUnlocker`)
  * into the payload of `DappConnectionManager.signTransaction(...)`, relay-safe.
  */
 export function toWizardSignRequest(builder: TransactionBuilder, opts: {
   inputPaths: InputPath[]; userPrompt?: string; broadcast?: boolean;
 }): WizardSignPayload {
-  if (opts.inputPaths.length === 0) throw new Error('inputPaths must name at least one wallet input');
   const wc = builder.generateWcTransactionObject({ broadcast: opts.broadcast ?? false, userPrompt: opts.userPrompt });
   const transaction = binToHex(encodeTransaction(wc.transaction as Transaction));
   const sourceOutputs = wc.sourceOutputs.map((so) => sourceOutputToRelay(so as never));
+  checkInputPaths(opts.inputPaths, sourceOutputs.length);
   for (const [i] of opts.inputPaths) {
-    if (i < 0 || i >= sourceOutputs.length) throw new Error(`inputPath index ${i} out of range`);
     if (sourceOutputs[i].unlockingBytecode !== '') throw new Error(`input ${i} is already unlocked; only placeholder inputs go to the wallet`);
   }
   return {
@@ -83,6 +98,7 @@ export function signWizardRequest(req: WizardSignPayload, keyFor: (pathName: str
   const sourceOutputs = hydrateSourceOutputs(t.sourceOutputs);
   if (sourceOutputs.length !== decoded.inputs.length) throw new Error('sourceOutputs must match inputs one to one');
   const tx: Transaction = { ...decoded, inputs: decoded.inputs.map((i) => ({ ...i })) };
+  checkInputPaths(req.inputPaths as InputPath[], decoded.inputs.length);
   for (const [index, pathName, addressIndex] of req.inputPaths) {
     const priv = keyFor(pathName, addressIndex);
     const pub = secp256k1.derivePublicKeyCompressed(priv);

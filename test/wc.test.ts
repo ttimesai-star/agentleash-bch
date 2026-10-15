@@ -118,4 +118,23 @@ describe('WizardConnect owner path', () => {
     const req = overRelay(toWizardSignRequest(tb, { inputPaths: [[0, 'receive', 0]] }));
     expect(() => signWizardRequest(req, () => ctx.attacker.priv)).toThrow(/not locked to this wallet/);
   });
+
+  it('refuses duplicate or fractional input indices on both sides (Jules 4474447409157392796)', () => {
+    const ctx = setup();
+    const state = ctx.addState(40_000n);
+    const ownerUtxo = ctx.addP2pkh(ctx.owner, 5_000n);
+    const tb = ctx.leash.buildWithdraw({
+      contractUtxos: [state], ownerUtxo, ownerUnlocker: placeholderP2PKHUnlocker(ctx.owner.address), ownerAddress: ctx.owner.address,
+    });
+    expect(() => toWizardSignRequest(tb, { inputPaths: [[0, 'receive', 0], [0, 'receive', 0]] })).toThrow(/duplicate input index 0/);
+    expect(() => toWizardSignRequest(tb, { inputPaths: [[0.5, 'receive', 0]] })).toThrow(/out of range/);
+    expect(() => toWizardSignRequest(tb, { inputPaths: [] })).toThrow(/at least one/);
+    const req = overRelay(toWizardSignRequest(tb, { inputPaths: [[0, 'receive', 0]] }));
+    (req as any).inputPaths = [[0, 'receive', 0], [0, 'receive', 0]];
+    expect(() => signWizardRequest(req, () => ctx.owner.priv)).toThrow(/duplicate input index 0/);
+    (req as any).inputPaths = [[0.5, 'receive', 0]];
+    expect(() => signWizardRequest(req, () => ctx.owner.priv)).toThrow(/out of range/);
+    (req as any).inputPaths = [[0, 'receive', 0]];
+    expect(verifySigned(signWizardRequest(req, () => ctx.owner.priv), (req.transaction as any).sourceOutputs)).toBe(true);
+  });
 });
