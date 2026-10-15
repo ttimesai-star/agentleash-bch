@@ -15,8 +15,7 @@
 //
 // Framework-free: `handle()` maps a plain request to a plain response, so it runs under node:http,
 // tests, or any other server.
-import { randomBytes } from 'node:crypto';
-import { binToHex, decodeTransaction, hexToBin, sha256 } from '@bitauth/libauth';
+import { base64ToBin, binToBase64, binToHex, binToUtf8, decodeTransaction, hexToBin, isBase64, sha256, utf8ToBin } from '@bitauth/libauth';
 import { NetworkProviderTransactionAlreadySubmittedError, type NetworkProvider } from 'cashscript';
 import { computeRequestHash, parseReceipt } from './receipt.js';
 import { DUST, lockingBytecodeOf } from './leash.js';
@@ -74,9 +73,15 @@ export interface PaymentRequired { x402Version: number; error?: string; resource
 export interface PaymentPayload { x402Version: number; accepted: PaymentRequirements; payload: { transaction: string } }
 export interface SettlementResponse { success: boolean; transaction?: string; network: BchNetwork; errorReason?: string }
 
+// Header codec without Buffer / node:crypto, so the same module runs in a browser (web/) and in Node.
 export const encodeHeader = (o: unknown): string =>
-  Buffer.from(JSON.stringify(o, (_k, v) => (typeof v === 'bigint' ? v.toString() : v)), 'utf8').toString('base64');
-export const decodeHeader = <T>(h: string): T => JSON.parse(Buffer.from(h, 'base64').toString('utf8')) as T;
+  binToBase64(utf8ToBin(JSON.stringify(o, (_k, v) => (typeof v === 'bigint' ? v.toString() : v))));
+export const decodeHeader = <T>(h: string): T => {
+  const t = h.trim();
+  if (!isBase64(t)) throw new Error('header is not base64');
+  return JSON.parse(binToUtf8(base64ToBin(t))) as T;
+};
+const randomHex = (n: number): string => binToHex(globalThis.crypto.getRandomValues(new Uint8Array(n)));
 
 interface NonceRecord {
   method: string; path: string; url: string; price: bigint; expires: number;
@@ -174,7 +179,7 @@ export class LeashPaywall {
     if (this.nonces.size >= this.maxNonces) {
       return { status: 429, headers: { 'content-type': 'application/json' }, body: JSON.stringify({ error: 'too many in-flight payments' }) };
     }
-    const nonce = randomBytes(16).toString('hex');
+    const nonce = randomHex(16);
     const url = this.cfg.origin + route.path;
     this.nonces.set(nonce, { method: route.method.toUpperCase(), path: route.path, url, price: route.price, expires: this.now() + this.ttl, state: 'open' });
     const body: PaymentRequired = {
