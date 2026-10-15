@@ -27,6 +27,9 @@ describe('Jules 2026-10-13: leashFetch with a minConfirmations server', () => {
       const after = (await ctx.leash.getUtxos()).state!.satoshis;
       return { r, served, spent: before - after, base, ctx };
     } finally {
+      if (typeof (server as any).closeAllConnections === 'function') {
+        (server as any).closeAllConnections();
+      }
       server.close();
     }
   };
@@ -51,7 +54,7 @@ describe('Jules 2026-10-13: leashFetch with a minConfirmations server', () => {
   });
 
   it('gives up at timeoutMs with the 202, still without paying again', async () => {
-    const { r, served, spent } = await run({ intervalMs: 5, timeoutMs: 40 }, 1_000_000);
+    const { r, served, spent } = await run({ intervalMs: 1, timeoutMs: 150 }, 1_000_000);
     expect(r.response.status).toBe(202);
     expect(served).toBe(0);
     expect(spent).toBeLessThan(2_000n);

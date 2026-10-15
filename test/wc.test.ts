@@ -1,7 +1,7 @@
 // Owner path through WizardConnect: dapp builds with placeholderP2PKHUnlocker -> relay JSON -> wallet signs
 // its own input (0x61) -> full BCH 2026 VM verification of the signed transaction.
 import { describe, expect, it } from 'vitest';
-import { decodeTransaction, hexToBin } from '@bitauth/libauth';
+import { binToHex, decodeTransaction, encodeTransaction, hexToBin } from '@bitauth/libauth';
 import { placeholderP2PKHUnlocker } from 'cashscript';
 import {
   buildGenesis, encodeState, P2PKH_UNLOCK_BYTES, signWizardRequest, toWizardSignRequest, verifySigned, type WizardSignPayload,
@@ -32,7 +32,8 @@ describe('WizardConnect owner path', () => {
     // state NFT must survive the relay serialization, otherwise the SIGHASH_UTXOS digest is wrong
     expect(relayed[1].token.nft).toEqual({ capability: 'mutable', commitment: encodeState({ elapsed: 3n, spent: 2_000n }) });
     const signed = signWizardRequest(req, () => ctx.owner.priv);
-    expect(verifySigned(signed, relayed)).toBe(true);
+    const origTxHex = (req.transaction as any).transaction;
+    expect(verifySigned(signed, relayed, origTxHex)).toBe(true);
     expect(feeRate(signed, relayed)).toBeGreaterThanOrEqual(1);
   });
 
@@ -45,7 +46,8 @@ describe('WizardConnect owner path', () => {
     });
     const req = overRelay(toWizardSignRequest(tb, { inputPaths: [[1, 'receive', 0]] }));
     const signed = signWizardRequest(req, () => ctx.owner.priv);
-    expect(verifySigned(signed, (req.transaction as any).sourceOutputs)).toBe(true);
+    const origTxHex = (req.transaction as any).transaction;
+    expect(verifySigned(signed, (req.transaction as any).sourceOutputs, origTxHex)).toBe(true);
     expect(feeRate(signed, (req.transaction as any).sourceOutputs)).toBeGreaterThanOrEqual(1);
   });
 
@@ -59,7 +61,8 @@ describe('WizardConnect owner path', () => {
     });
     const req = overRelay(toWizardSignRequest(builder, { inputPaths: [[0, 'receive', 0]] }));
     const signed = signWizardRequest(req, () => ctx.owner.priv);
-    expect(verifySigned(signed, (req.transaction as any).sourceOutputs)).toBe(true);
+    const origTxHex = (req.transaction as any).transaction;
+    expect(verifySigned(signed, (req.transaction as any).sourceOutputs, origTxHex)).toBe(true);
     expect(feeRate(signed, (req.transaction as any).sourceOutputs)).toBeGreaterThanOrEqual(1);
   });
 
@@ -119,7 +122,7 @@ describe('WizardConnect owner path', () => {
     expect(() => signWizardRequest(req, () => ctx.attacker.priv)).toThrow(/not locked to this wallet/);
   });
 
-  it('refuses duplicate or fractional input indices on both sides (Jules 4474447409157392796)', () => {
+  it('refuses duplicate, fractional, -0, missing, or invalid input indices and address indices on both sides', () => {
     const ctx = setup();
     const state = ctx.addState(40_000n);
     const ownerUtxo = ctx.addP2pkh(ctx.owner, 5_000n);
@@ -128,13 +131,51 @@ describe('WizardConnect owner path', () => {
     });
     expect(() => toWizardSignRequest(tb, { inputPaths: [[0, 'receive', 0], [0, 'receive', 0]] })).toThrow(/duplicate input index 0/);
     expect(() => toWizardSignRequest(tb, { inputPaths: [[0.5, 'receive', 0]] })).toThrow(/out of range/);
+    expect(() => toWizardSignRequest(tb, { inputPaths: [[-0, 'receive', 0]] })).toThrow(/out of range/);
+    expect(() => toWizardSignRequest(tb, { inputPaths: [[0, 'receive', -0]] })).toThrow(/must be a non-negative integer/);
+    expect(() => toWizardSignRequest(tb, { inputPaths: [[0, 'invalid', 0]] })).toThrow(/unknown pathName invalid/);
+    expect(() => toWizardSignRequest(tb, { inputPaths: [[0, 'defi', 0]] })).not.toThrow(); // hdwalletv1 PATH_DEFI
+    expect(() => toWizardSignRequest(tb, { inputPaths: [[0, 'receive'] as any] })).toThrow(/3-element tuple/);
+    expect(() => toWizardSignRequest(tb, { inputPaths: [[0, 'receive', 1.5]] })).toThrow(/non-negative integer/);
     expect(() => toWizardSignRequest(tb, { inputPaths: [] })).toThrow(/at least one/);
     const req = overRelay(toWizardSignRequest(tb, { inputPaths: [[0, 'receive', 0]] }));
     (req as any).inputPaths = [[0, 'receive', 0], [0, 'receive', 0]];
     expect(() => signWizardRequest(req, () => ctx.owner.priv)).toThrow(/duplicate input index 0/);
     (req as any).inputPaths = [[0.5, 'receive', 0]];
     expect(() => signWizardRequest(req, () => ctx.owner.priv)).toThrow(/out of range/);
+    (req as any).inputPaths = [[-0, 'receive', 0]];
+    expect(() => signWizardRequest(req, () => ctx.owner.priv)).toThrow(/out of range/);
+    (req as any).inputPaths = [[0, 'receive', -0]];
+    expect(() => signWizardRequest(req, () => ctx.owner.priv)).toThrow(/must be a non-negative integer/);
+    (req as any).inputPaths = [[0, 'invalid', 0]];
+    expect(() => signWizardRequest(req, () => ctx.owner.priv)).toThrow(/unknown pathName invalid/);
     (req as any).inputPaths = [[0, 'receive', 0]];
     expect(verifySigned(signWizardRequest(req, () => ctx.owner.priv), (req.transaction as any).sourceOutputs)).toBe(true);
+  });
+
+  it('verifySigned rejects a transaction whose outputs differ from expectedTxHex', () => {
+    const ctx = setup();
+    const state = ctx.addState(40_000n, { elapsed: 3n, spent: 2_000n });
+    const ownerUtxo = ctx.addP2pkh(ctx.owner, 5_000n);
+    const tb = ctx.leash.buildWithdraw({
+      contractUtxos: [state], ownerUtxo, ownerUnlocker: placeholderP2PKHUnlocker(ctx.owner.address), ownerAddress: ctx.owner.address,
+    });
+    const req = overRelay(toWizardSignRequest(tb, { inputPaths: [[0, 'receive', 0]], userPrompt: 'Withdraw leash' }));
+    const relayed = (req.transaction as any).sourceOutputs;
+    const signed = signWizardRequest(req, () => ctx.owner.priv);
+    const origTxHex = (req.transaction as any).transaction;
+
+    // Sanity: passes with origTxHex
+    expect(verifySigned(signed, relayed, origTxHex)).toBe(true);
+
+    // Tamper with signed tx outputs
+    const tx = decodeTransaction(hexToBin(signed));
+    if (typeof tx === 'string') throw new Error(tx);
+    tx.outputs[0].valueSatoshis += 100n; // modify value
+    const tamperedHex = binToHex(encodeTransaction(tx));
+
+    const res = verifySigned(tamperedHex, relayed, origTxHex);
+    expect(typeof res).toBe('string');
+    expect(res).toContain('output 0 value or locking bytecode does not match');
   });
 });

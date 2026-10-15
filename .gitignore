@@ -6,3 +6,4 @@ scripts/chipnet-state*.json
 local/
 .jules_brief*
 scripts/x402-chipnet-state.json
+scripts/paytaca-phone-log.jsonl

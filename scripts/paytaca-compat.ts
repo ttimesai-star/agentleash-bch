@@ -34,12 +34,25 @@ import { AgentLeash, buildGenesis, encodeState, p2pkhLock, toWizardSignRequest, 
 import { setup, type Key } from '../test/helpers.js';
 
 const args = process.argv.slice(2);
-const COMMIT = args.includes('--commit') ? args[args.indexOf('--commit') + 1] : 'bfeaefe9c93cc1f9992e78727922e63c37ebd164';
+const rawCommit = args.includes('--commit') ? args[args.indexOf('--commit') + 1] : 'bfeaefe9c93cc1f9992e78727922e63c37ebd164';
+if (!/^[0-9a-f]{7,40}$/i.test(rawCommit)) {
+  console.error(`Invalid --commit argument: ${rawCommit}`);
+  process.exit(1);
+}
+const COMMIT = rawCommit.toLowerCase();
+
 const RELAY = args.includes('--relay');
 const PHONE = args.includes('--phone');
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
 const DIR = join(ROOT, 'local', 'paytaca', COMMIT);
 const FILES = { 'bch-sign.mjs': 'src/wallet/bch-sign.js', 'service.mjs': 'src/wallet/wizardconnect/service.js' } as const;
+
+// Expected SHA256 digests for pinned commit bfeaefe9c93cc1f9992e78727922e63c37ebd164
+const PINNED_SHA256: Record<string, string> = {
+  'src/wallet/bch-sign.js': 'b9a662ec9126e955181e574a3d0ba7bd6143ead383af28ecdab1d4ce4ce4c55e',
+  'src/wallet/wizardconnect/service.js': '3d1c2e491eafdb304056a54342bf636f111c1a383cd8a059e19256200aae3968',
+};
+
 // BIP39 test vector; the seed is sha512(mnemonic) via the bip39 stub, so it is NOT the BIP39 seed of these words.
 const TEST_MNEMONIC = 'abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about';
 
@@ -62,7 +75,11 @@ async function fetchPaytaca(): Promise<void> {
       src = await r.text();
       writeFileSync(target + '.orig', src);
     }
-    console.log(`paytaca ${COMMIT.slice(0, 8)} ${remote} sha256 ${createHash('sha256').update(src).digest('hex')}`);
+    const hash = createHash('sha256').update(src).digest('hex');
+    console.log(`paytaca ${COMMIT.slice(0, 8)} ${remote} sha256 ${hash}`);
+    if (PINNED_SHA256[remote] && hash !== PINNED_SHA256[remote]) {
+      throw new Error(`SHA256 mismatch for ${remote}: expected ${PINNED_SHA256[remote]}, got ${hash}`);
+    }
     const rewritten = src
       .replace(/from 'bitauth-libauth-v3'/g, "from '@bitauth/libauth'")
       .replace(/from 'src\/wallet\/index'/g, "from './stub-wallet-index.mjs'")
@@ -117,7 +134,8 @@ async function main(): Promise<void> {
       fund: 40_000n,
     });
     const req = toWizardSignRequest(builder, { inputPaths: [[0, 'receive', 0]], userPrompt: 'AgentLeash: create leash' });
-    const v = verifySigned(await sign(req), srcOf(req));
+    const origTxHex = (req.transaction as any).transaction;
+    const v = verifySigned(await sign(req), srcOf(req), origTxHex);
     check('genesis signed by Paytaca signRequest passes the BCH 2026 VM', v === true, v === true ? '' : String(v));
   }
   // top-up: contract input (full unlocking bytecode) + owner P2PKH placeholder at index 1
@@ -127,7 +145,8 @@ async function main(): Promise<void> {
     const ownerUtxo = ctx.addP2pkh(owner, 50_000n);
     const tb = ctx.leash.buildTopUp({ stateUtxo: state, ownerUtxo, ownerUnlocker: placeholderP2PKHUnlocker(owner.address), ownerAddress: owner.address, amount: 20_000n });
     const req = toWizardSignRequest(tb, { inputPaths: [[1, 'receive', 0]], userPrompt: 'AgentLeash: top up' });
-    const v = verifySigned(await sign(req), srcOf(req));
+    const origTxHex = (req.transaction as any).transaction;
+    const v = verifySigned(await sign(req), srcOf(req), origTxHex);
     check('top-up (state NFT input untouched, owner input signed) passes the VM', v === true, v === true ? '' : String(v));
   }
   // withdraw: owner P2PKH at index 0, state contract input after it
@@ -137,7 +156,8 @@ async function main(): Promise<void> {
     const ownerUtxo = ctx.addP2pkh(owner, 5_000n);
     const tb = ctx.leash.buildWithdraw({ contractUtxos: [state], ownerUtxo, ownerUnlocker: placeholderP2PKHUnlocker(owner.address), ownerAddress: owner.address });
     const req = toWizardSignRequest(tb, { inputPaths: [[0, 'receive', 0]], userPrompt: 'AgentLeash: withdraw' });
-    const v = verifySigned(await sign(req), srcOf(req));
+    const origTxHex = (req.transaction as any).transaction;
+    const v = verifySigned(await sign(req), srcOf(req), origTxHex);
     check('withdraw signed by Paytaca passes the VM', v === true, v === true ? '' : String(v));
 
     // Negative: a path that names the contract input. Paytaca does not refuse (the relay drops `contract`,
@@ -147,7 +167,7 @@ async function main(): Promise<void> {
     (bad as any).inputPaths = [[1, 'receive', 0]];
     let out: string | Error;
     try { out = await svc.signRequest(bad); } catch (e: any) { out = e; }
-    const caught = out instanceof Error || verifySigned(out, srcOf(req)) !== true;
+    const caught = out instanceof Error || verifySigned(out, srcOf(req), origTxHex) !== true;
     check('path at the contract input: owner input stays unsigned and verifySigned rejects it', caught,
       out instanceof Error ? `Paytaca threw: ${out.message.slice(0, 80)}` : 'Paytaca returned a tx, VM rejected it');
   }
@@ -211,9 +231,16 @@ async function dappRound(onUri: (uri: string) => void, timeoutMs: number, logFil
         const pub = dapp.getPubkey(0, 0n);
         if (!pub) throw new Error('no pubkey for receive/0');
         for (const { name, payload } of requestsFor(pub)) {
-          const res = await dapp.signTransaction(payload);
+          const origTxHex = (payload.transaction as any).transaction;
+          // Per-request timeout (30s) so dapp does not hang indefinitely if wallet never answers
+          let timer: ReturnType<typeof setTimeout> | undefined;
+          const res = await Promise.race([
+            dapp.signTransaction(payload),
+            new Promise<{ error: string; signedTransaction?: undefined }>((r) => { timer = setTimeout(() => r({ error: 'wallet signing request timed out (30s)' }), 30_000); }),
+          ]).finally(() => clearTimeout(timer));
           if (res.error) { check(`${name}: "${msg.wallet_name}" signs`, false, `wallet error: ${res.error}`); record({ event: name, error: res.error }); continue; }
-          const v = verifySigned(res.signedTransaction, (payload.transaction as any).sourceOutputs);
+          if (!res.signedTransaction) { check(`${name}: "${msg.wallet_name}" signs`, false, 'no signedTransaction in the answer'); continue; }
+          const v = verifySigned(res.signedTransaction, (payload.transaction as any).sourceOutputs, origTxHex);
           check(`${name}: "${msg.wallet_name}" signs over the relay, VM verify`, v === true, v === true ? '' : String(v));
           record({ event: name, vm: v === true ? 'ok' : String(v), signedTransaction: res.signedTransaction });
         }
