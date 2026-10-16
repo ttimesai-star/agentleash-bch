@@ -8,7 +8,7 @@ import { binToHex } from '@bitauth/libauth';
 import { MockNetworkProvider, randomUtxo, type SpendableUtxo } from 'cashscript';
 import {
   CAPS, EXIT, MAINNET_ABS_MAX_LOSS, addressOfPkh, executeRun, executeWithdraw, knownTestnetPrivs, loadKeys, loadState,
-  mainnetConfirmation, mainnetGate, planRun, saveStateAtomic, type Ctx, type Keys,
+  logReplacer, mainnetConfirmation, mainnetGate, planRun, saveStateAtomic, type Ctx, type Keys,
 } from '../scripts/net-run-lib.js';
 import { AgentLeash, lockingBytecodeOf } from '../src/index.js';
 import { mkKey, type Key } from './helpers.js';
@@ -197,6 +197,33 @@ describe('net-run: recovery from the saved state', () => {
     saveStateAtomic(ctx.statePath, plan.state);
     const other = mkKey();
     expect(await executeWithdraw({ ...ctx, keys: { ...ctx.keys, owner: keysOf(other, other).owner } })).toBe(EXIT.refused);
+  });
+});
+
+describe('net-run: private keys never in the log, txids always (Jules review 17.10)', () => {
+  it('logReplacer: priv-named keys and known keys (whole or inside a string) redacted; txids and bigints kept', () => {
+    const key = 'ab'.repeat(32), txid = 'cd'.repeat(32);
+    const sec = new Set([key]);
+    const out = JSON.parse(JSON.stringify({ agentPrivHex: 'x', ownerKey: key.toUpperCase(), error: `bad key ${key} in tx ${txid}`, txid, category: txid, fee: 123n, nested: { privHex: 'y', ok: 'safe' } }, logReplacer(sec)));
+    expect(out).toEqual({ agentPrivHex: '[REDACTED]', ownerKey: '[REDACTED]', error: `bad key [REDACTED] in tx ${txid}`, txid, category: txid, fee: '123', nested: { privHex: '[REDACTED]', ok: 'safe' } });
+    // an unknown 64-hex value is not touched: it may be a txid
+    expect(JSON.stringify({ v: 'ef'.repeat(32) }, logReplacer(sec))).toContain('ef'.repeat(32));
+  });
+
+  it('a full run through the real log path: no owner or agent key in any line, every txid present', async () => {
+    const lines: string[] = [];
+    const secrets = new Set<string>();
+    const { ctx, provider, owner } = mkCtx();
+    secrets.add(ctx.keys.owner.privHex);
+    const c: Ctx = { ...ctx, secrets, log: (e) => lines.push(JSON.stringify(e, logReplacer(secrets))) };
+    provider.addUtxo(owner.address, randomUtxo({ satoshis: 100_000n, vout: 1 }));
+    expect(await executeRun(c)).toBe(EXIT.ok);
+    const st = loadState(ctx.statePath);
+    expect(secrets.has(st.agentPrivHex)).toBe(true);
+    const all = lines.join(' | ').toLowerCase();
+    expect(all).not.toContain(binToHex(owner.priv));
+    expect(all).not.toContain(st.agentPrivHex);
+    for (const t of [st.selfSendTxid, st.genesisTxid, st.withdrawTxid]) expect(all).toContain(t);
   });
 });
 

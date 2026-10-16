@@ -29,7 +29,7 @@ import { homedir } from 'os';
 import { fileURLToPath } from 'url';
 import { ElectrumNetworkProvider } from 'cashscript';
 import {
-  CAPS, EXIT, executeRun, executeWithdraw, knownTestnetPrivs, loadKeys, loadState, mainnetConfirmation, mainnetGate, type Ctx, type Net,
+  CAPS, EXIT, executeRun, executeWithdraw, knownTestnetPrivs, loadKeys, loadState, logReplacer, mainnetConfirmation, mainnetGate, type Ctx, type Net,
 } from './net-run-lib.js';
 
 const argv = process.argv.slice(2);
@@ -51,10 +51,12 @@ async function main(): Promise<number> {
   const statePath = opt('state') ?? `${repoDir}/local/net-run-${net}.json`;
   const logPath = `${repoDir}/scripts/${net}-run-log.jsonl`;
   const provider = new ElectrumNetworkProvider(net);
+  // owner key now, the run's agent key added by the lib as soon as it is known (txids stay visible)
+  const secrets = new Set([keys.owner.privHex.toLowerCase()]);
   const ctx: Ctx = {
-    net, provider, keys, caps, broadcast: BROADCAST, statePath, historyPath: `${repoDir}/local/net-run-${net}-history.jsonl`,
+    net, provider, keys, caps, broadcast: BROADCAST, statePath, historyPath: `${repoDir}/local/net-run-${net}-history.jsonl`, secrets,
     log: (e) => {
-      const line = JSON.stringify({ at: new Date().toISOString(), net, ...e }, (_k, v) => (typeof v === 'bigint' ? v.toString() : v));
+      const line = JSON.stringify({ at: new Date().toISOString(), net, ...e }, logReplacer(secrets));
       if (BROADCAST) appendFileSync(logPath, line + '\n');
       console.log(line);
     },

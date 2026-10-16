@@ -61,6 +61,24 @@ export function collectPrivs(x: unknown, out: Set<string> = new Set()): Set<stri
 }
 
 /**
+ * JSON.stringify replacer for net-run logs (Jules review 17.10): bigint -> string; a value under a key containing
+ * "priv" -> [REDACTED]; every known private key (owner + this run's agent) is cut out of any string, whole or as
+ * a substring. Other 64-hex values (txids, NFT categories) stay visible: a txid looks like a key but is public.
+ */
+export function logReplacer(secrets: Set<string>): (k: string, v: unknown) => unknown {
+  return (k, v) => {
+    if (typeof v === 'bigint') return v.toString();
+    if (k && /priv/i.test(k)) return '[REDACTED]';
+    if (typeof v === 'string') {
+      let s = v;
+      for (const sec of secrets) if (sec && s.toLowerCase().includes(sec)) s = s.replace(new RegExp(sec, 'gi'), '[REDACTED]');
+      return s;
+    }
+    return v;
+  };
+}
+
+/**
  * Keys that exist on chipnet or in public demos: chipnet/testnet secrets files, the public web demo agent,
  * chipnet run states. None of them may ever hold mainnet money.
  */
@@ -190,6 +208,8 @@ export interface Ctx {
   statePath: string;
   historyPath: string;
   log: (e: Record<string, unknown>) => void;
+  /** Private keys (lowercase hex) the log must never show; the run adds its agent key here. */
+  secrets?: Set<string>;
   /** Delay between polls for a coin to show up (ms) and number of polls. */
   pollMs?: number;
   polls?: number;
@@ -284,6 +304,7 @@ export async function executeRun(ctx: Ctx, agentPriv?: Uint8Array): Promise<numb
   if (ctx.broadcast) { const prev = loadState(ctx.statePath); if (prev && prev.closed !== true) throw new Error(`an earlier ${ctx.net} run is still open (leash ${prev.leash}); run \`withdraw\` first`); }
   const plan = await planRun(ctx, agentPriv);
   const { state } = plan;
+  ctx.secrets?.add(state.agentPrivHex.toLowerCase());
   ctx.log({ label: 'plan', leash: state.leash, category: state.stateCategory, fund: state.fund, selfSendFee: plan.selfSendFee, genesisFee: plan.genesisFee, plannedMaxLoss: state.plannedMaxLoss });
   if (!ctx.broadcast) {
     if (plan.selfSend) await send(ctx, 'self-send (vout 0 for genesis)', plan.selfSend);
@@ -386,6 +407,7 @@ async function withdrawInner(ctx: Ctx, stateArg?: RunState): Promise<number> {
   const state: RunState | undefined = stateArg ?? loadState(ctx.statePath);
   if (!state) { ctx.log({ label: 'withdraw', error: `no run state at ${ctx.statePath}` }); return EXIT.refused; }
   if (state.closed) { ctx.log({ label: 'withdraw', note: 'run already closed', closeReason: state.closeReason, withdrawTxid: state.withdrawTxid }); return EXIT.ok; }
+  if (typeof state.agentPrivHex === 'string') ctx.secrets?.add(state.agentPrivHex.toLowerCase());
   if (state.version !== 1 || state.net !== ctx.net) { ctx.log({ label: 'withdraw', error: `state file is not a v1 ${ctx.net} run state` }); return EXIT.refused; }
   if (state.ownerAddress !== ctx.keys.owner.address) { ctx.log({ label: 'withdraw', error: 'state owner differs from the owner key in the secrets file' }); return EXIT.refused; }
   const live = new AgentLeash(paramsFromState(state), ctx.provider);
