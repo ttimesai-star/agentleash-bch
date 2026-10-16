@@ -384,6 +384,9 @@ describe('SDK guards', () => {
     expect(() => setup({ allow: [] })).toThrow(/allow-list/);
     expect(() => setup({ period: 70_000n })).toThrow(/period/);
     expect(() => setup({ allow: [new Uint8Array()] })).toThrow(/anyone-can-spend/);
+    for (const bad of ['', 'invalid', '00'.repeat(31), '00'.repeat(33), 'AB'.repeat(32), 'zz'.repeat(32)]) {
+      expect(() => setup({ stateCategory: bad }), bad).toThrow(/stateCategory must be 64 lowercase hex/);
+    }
     const k = mkKey();
     expect(() => setup({ allow: [k.lock, k.lock, k.lock, k.lock] })).toThrow(/allow-list/);
   });

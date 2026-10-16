@@ -103,6 +103,11 @@ export const isP2sh20Lock = (b: Uint8Array): boolean => b.length === 23 && b[0] 
 export const isP2sh32Lock = (b: Uint8Array): boolean => b.length === 35 && b[0] === 0xaa && b[1] === 0x20 && b[34] === 0x87;
 
 export function validateParams(p: LeashParams): void {
+  // Jules review 17.10: the category is a txid (32 bytes). Lowercase only: getUtxos compares it with the
+  // server's category string verbatim, so an uppercase category would make the state coin invisible.
+  if (typeof p.stateCategory !== 'string' || !/^[0-9a-f]{64}$/.test(p.stateCategory)) {
+    throw new Error('stateCategory must be 64 lowercase hex chars (a txid)');
+  }
   if (p.allow.length < 1 || p.allow.length > 3) throw new Error('allow-list must have 1..3 entries');
   if (p.allow.some((a) => a.length === 0)) throw new Error('empty allow-list entry would be anyone-can-spend');
   // Security review 16.10: only address templates (P2PKH / P2SH20 / P2SH32). Anything else is either
