@@ -364,6 +364,7 @@ How the page was tested (16.10.2026, headless Chromium against the built site an
 | Path | Result | txids |
 |---|---|---|
 | judge path on the public demo leash: tool payment, 5 attacks, journal | payment settled; recipient / overspend / fee / fakereset rejected by the node (`mandatory-script-verify-flag-failed`), clock rejected by consensus (`non-BIP68-final`) | demo genesis `a4675bc1f9144cd05327aede4b2349633b0f5184b77bdf27234ba65e7569c2e0`, payment `4928c5aa…4290059f` |
+| **agent autopilot** on the live site (GitHub Pages), 16.10.2026 22:32 Minsk: "Run the agent (3 tools)" on the public demo leash | 3 payments over 402 in 12 s, each settled and answered; window 0 → 5 215 of 12 000 sats; earlier the same button on a used-up window showed the refusal before signing | `a452479368c0f17a6ebc09c1bca28c4979eb2169705f017ac9acbe3b1e867467`, `d06f0939f8cebbc48efb8ecac88f96632bc4098d638f87516eaa907df8d5cc3b`, `fa68b521105ef72828668c1dbd2fc6eb305f0d0ecc184dfac360e22dda50cb18` |
 | owner via **WizardConnect**: the page (dapp) and a headless HD wallet (`scripts/wc-test-wallet.ts`) over the public relays | prepare-coin and genesis signed by the wallet, checked by the page (`verifySigned` against the requested tx + VM) and accepted; second run: genesis and withdraw | `891e296a…`, `3257b032…`; `385d5587…`, `ae135ff5…` |
 | owner via browser key (chipnet): create, agent pays a tool, top up, withdraw | all accepted | `f6af1690…`, `4e7b9bcf…`, `536f3b07…`, `8e654929…` |
 

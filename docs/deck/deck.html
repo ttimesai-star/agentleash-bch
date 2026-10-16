@@ -1,0 +1,312 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<title>AgentLeash: BCH BLAZE 2026 presentation</title>
+<!--
+  Presentation for BCH BLAZE 2026, laid out on the organisers' "Widget Factory" template
+  (Story / Benefits / BCH Usage / Vision / Thank you; background art and logo from that template, docs/deck/assets).
+  Build: python docs/deck/build_deck.py  ->  docs/AgentLeash_BLAZE2026.pdf (16:9, 1280x720 px pages).
+  Every number here is from the repository (README, logs in scripts/, test run); "planned" marks what is not done.
+-->
+<style>
+  @page { size: 1280px 720px; margin: 0; }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; padding: 0; background: #000; }
+  body { font-family: "Segoe UI", Roboto, Arial, sans-serif; color: #fff; }
+  .slide { width: 1280px; height: 720px; position: relative; overflow: hidden; page-break-after: always; break-after: page;
+    background: #0b0b0d url(assets/bg_room.jpg) center/cover; }
+  .slide::before { content: ""; position: absolute; inset: 0; background: url(assets/glow_bottom.png) center/cover; opacity: .9; pointer-events: none; }
+  .slide.title { background-image: url(assets/bg_title.jpg); }
+  .slide.plain { background: #050506; }
+  .slide.plain::before { background: url(assets/glow_bottom.png) center/cover; }
+  .in { position: absolute; inset: 0; padding: 54px 70px; }
+  .logo { position: absolute; left: 0; top: 0; width: 76px; height: 76px; background: #8e1022 url(assets/blaze_logo.png) center/62px no-repeat; }
+  .fire { position: absolute; right: 26px; bottom: 14px; width: 120px; height: 120px; background: url(assets/fireball.png) center/contain no-repeat; }
+  .bar { display: inline-block; background: #8e1022; color: #fff; font-weight: 800; font-size: 34px; padding: 6px 28px 8px 26px; margin: 0 0 22px -26px; }
+  h1 { font-size: 64px; margin: 0; font-weight: 800; letter-spacing: -0.5px; }
+  h2 { font-size: 40px; margin: 0 0 18px; font-weight: 800; }
+  .red { color: #d01a32; }
+  .lead { font-size: 30px; line-height: 1.3; font-weight: 300; }
+  .panel { background: rgba(8, 8, 10, .82); border: 1px solid rgba(255,255,255,.08); border-radius: 6px; padding: 22px 26px; }
+  .redbox { border: 2px solid #8e1022; }
+  ul { margin: 0; padding-left: 26px; }
+  li { margin: 0 0 12px; font-size: 24px; line-height: 1.32; font-weight: 600; }
+  li li { font-weight: 400; font-size: 19px; margin: 4px 0; list-style: circle; }
+  p { margin: 0 0 12px; font-size: 21px; line-height: 1.4; }
+  .small { font-size: 16px; line-height: 1.4; }
+  .tiny { font-size: 13.5px; line-height: 1.35; color: #c9c9c9; }
+  .muted { color: #b9b9b9; }
+  .mono, code, pre { font-family: Consolas, "Cascadia Mono", monospace; }
+  code { background: rgba(255,255,255,.08); padding: 1px 6px; border-radius: 4px; font-size: .92em; }
+  pre { margin: 0; white-space: pre-wrap; font-size: 14.5px; line-height: 1.38; color: #e8e8e8; }
+  .ok { color: #43d39e; } .no { color: #ff5a6e; } .warn { color: #f5b942; }
+  .grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 24px; }
+  .grid3 { display: grid; grid-template-columns: repeat(3, 1fr); gap: 18px; }
+  .left-title { position: absolute; left: 70px; top: 0; bottom: 0; width: 330px; display: flex; flex-direction: column; justify-content: center; }
+  .left-title h2 { font-size: 46px; line-height: 1.12; }
+  .left-title .underline { width: 74px; height: 22px; background: #8e1022; }
+  .right-panel { position: absolute; left: 420px; right: 60px; top: 56px; bottom: 56px; }
+  table { border-collapse: collapse; width: 100%; font-size: 17px; }
+  th, td { text-align: left; padding: 7px 10px; border-bottom: 1px solid rgba(255,255,255,.12); vertical-align: top; }
+  th { color: #f0a0aa; font-weight: 700; font-size: 15px; text-transform: uppercase; letter-spacing: .4px; }
+  .center { text-align: center; }
+  .tag { display: inline-block; font-size: 13px; font-weight: 700; padding: 2px 8px; border-radius: 3px; background: #8e1022; margin-right: 6px; vertical-align: 2px; }
+  .tag.g { background: #1d6b4f; } .tag.y { background: #7a5a12; }
+  a { color: #7fd3ff; text-decoration: none; }
+  .shot { border: 2px solid #8e1022; display: block; }
+  .foot { position: absolute; left: 70px; bottom: 22px; font-size: 13px; color: #a0a0a0; }
+</style>
+</head>
+<body>
+
+<!-- 1. Title (template slide 1) -->
+<section class="slide title">
+  <div class="logo"></div>
+  <div class="in" style="display:flex; align-items:center; gap:56px;">
+    <div style="flex:1">
+      <h1>AgentLeash</h1>
+      <p class="lead" style="margin-top:14px">A spending leash for AI agents<br/>on Bitcoin Cash</p>
+      <p class="small muted" style="margin-top:26px">Solo entry · BCH BLAZE 2026 · Mainnet Track</p>
+      <p class="small" style="margin-top:30px">
+        <span class="mono">ttimesai-star.github.io/agentleash-bch</span><br/>
+        <span class="mono">github.com/ttimesai-star/agentleash-bch</span>
+      </p>
+    </div>
+    <div style="width:380px; height:380px; background:#f4e3c3; display:flex; align-items:center; justify-content:center; flex-direction:column; gap:14px;">
+      <img src="assets/icon.svg" width="190" height="190" alt="" />
+      <div style="color:#1a1a1a; font-weight:800; font-size:30px; letter-spacing:.5px">AgentLeash</div>
+      <div style="color:#5a2a2a; font-size:16px; font-weight:600">covenant · x402 · WizardConnect</div>
+    </div>
+  </div>
+</section>
+
+<!-- 2. Tagline (template slide 2) -->
+<section class="slide plain">
+  <div class="in center" style="padding-top:110px">
+    <h1 style="font-weight:300; font-size:58px">Agent<span class="red" style="font-weight:800">Leash</span>!</h1>
+    <p class="lead" style="margin:40px auto 0; max-width:980px; font-size:36px">Give your AI agent a wallet<br/>it <b>cannot</b> run away with.</p>
+    <p class="lead" style="margin:34px auto 0; max-width:980px; font-size:24px; color:#ddd">The agent signs its own payments. The Bitcoin Cash network,<br/>not a server and not the agent's code, enforces the budget.</p>
+    <p style="margin-top:44px; font-size:24px"><a>https://ttimesai-star.github.io/agentleash-bch/</a></p>
+  </div>
+</section>
+
+<!-- 3. Story / problem (template slide 3) -->
+<section class="slide">
+  <div class="in">
+    <div class="bar">The Story of AgentLeash</div>
+    <div class="grid2" style="grid-template-columns: 1.05fr .95fr">
+      <div class="panel">
+        <p><b>AI agents now pay for things themselves:</b> data, APIs, compute, per call, over HTTP 402 ("x402").</p>
+        <p>To pay, an agent needs a key. A hot key is <b>unlimited</b>: one prompt injection, one bug, one leaked log, and the wallet is gone.</p>
+        <p>The usual fix is a custodial API with spending rules. Then you trust a server instead of the agent.</p>
+        <p style="margin:0"><b>So we asked:</b> can the <span class="red">network itself</span> hold the agent to a budget, while the owner can still pull the plug at any time?</p>
+      </div>
+      <div class="panel redbox">
+        <p class="small muted" style="margin-bottom:8px">What a compromised agent tries, and who stops it</p>
+        <table>
+          <tr><th>Attack</th><th>Stopped by</th></tr>
+          <tr><td>pay the attacker</td><td>covenant: payee not allow-listed</td></tr>
+          <tr><td>spend past the budget</td><td>covenant: limit exceeded</td></tr>
+          <tr><td>burn it as miner fees</td><td>covenant: fees count, fee cap</td></tr>
+          <tr><td>fake a fresh window</td><td>covenant: wrong new state</td></tr>
+          <tr><td>fast-forward the clock</td><td>consensus: non-BIP68-final</td></tr>
+        </table>
+        <p class="tiny" style="margin-top:12px">Each row is a live button on the demo page: it signs the attack with the (published) agent key and broadcasts it to chipnet. The node's refusal is shown verbatim.</p>
+      </div>
+    </div>
+  </div>
+  <div class="fire"></div>
+</section>
+
+<!-- 4. Benefits / solution (template slide 4) -->
+<section class="slide">
+  <div class="left-title"><h2>Benefits of AgentLeash</h2><div class="underline"></div></div>
+  <div class="right-panel panel" style="padding:30px 34px">
+    <ul>
+      <li>The owner sets the rules once, they become the contract address
+        <ul><li>budget per window of blocks, <b>miner fees included</b></li><li>up to 3 allowed payees, a fee cap per payment</li></ul></li>
+      <li>The agent pays on its own, no server holds the money
+        <ul><li>a tool answers <code>402</code>, the agent signs a covenant payment, the tool serves</li><li>every payment carries an on-chain receipt bound to the HTTP request</li></ul></li>
+      <li>The network says no, even to someone holding the agent key</li>
+      <li>The owner pulls the plug any time, without the agent's key
+        <ul><li>withdraw, top up, migrate to new rules</li></ul></li>
+      <li>Tiny payments stay tiny: a pay tx is 700 bytes, <b>705 sats ≈ 0.2 US cent</b> at 1 sat/byte
+        <ul><li>BCH ≈ 274 USD on 16.10.2026 (CoinGecko, read by the demo's own price tool)</li></ul></li>
+    </ul>
+  </div>
+  <div class="fire"></div>
+</section>
+
+<!-- 5. Demo -->
+<section class="slide">
+  <div class="in">
+    <div class="bar">Live demo: click, no coins, no wallet</div>
+    <div class="grid2" style="grid-template-columns: 1.08fr .92fr; gap:22px">
+      <div><img class="shot" src="assets/demo_console.png" style="width:100%; height:auto" alt="AgentLeash web demo: the agent pays for tools from the leash" /><p class="tiny" style="margin-top:6px">Live page, 16.10.2026: "Run the agent" on the public demo leash, three 402 payments on chipnet in 12 s (txids a4524793…, d06f0939…, fa68b521…).</p></div>
+      <div class="panel" style="padding:18px 20px">
+        <p class="small" style="margin-bottom:8px"><b>On the page</b> (chipnet, public demo leash; its agent key is published on purpose):</p>
+        <ol class="small" style="margin:0 0 12px; padding-left:22px; line-height:1.45">
+          <li style="font-size:16px; font-weight:400; margin:0 0 4px">"Run the agent": it plans, gets 402, pays each tool, txid per call</li>
+          <li style="font-size:16px; font-weight:400; margin:0 0 4px">"Run until the leash says no": refused <b>before signing</b></li>
+          <li style="font-size:16px; font-weight:400; margin:0 0 4px">"Try to break it": 5 attacks, the node refuses each</li>
+          <li style="font-size:16px; font-weight:400; margin:0">Journal from the chain; create your own leash via WizardConnect</li>
+        </ol>
+        <p class="small" style="margin-bottom:6px"><b>One command</b>, <code>npm run agent:chipnet</code> (16.10.2026):</p>
+<pre>PAID #1 chain_tip   tx 51fbf483…4a37e7
+PAID #2 bch_price   tx 504ade2c…73ac2c
+PAID #3 fortune     tx edcc9ea0…b5dcd3
+PAID #4-6 chain_tip (3 more)
+<span class="no">NO   #7 refused by SDK: limit exceeded:
+     10331 of 12000 sats spent, 1705 requested</span>
+<span class="ok">ATTACK not allow-listed  node: mandatory-
+     script-verify-flag-failed (code 16)
+ATTACK 1 sat over limit  node: same (code 16)
+ATTACK clock             node: non-BIP68-final</span></pre>
+        <p class="tiny" style="margin-top:8px">Planner: scripted by default; any OpenAI-compatible LLM with your key (tested with gpt-oss-20b).</p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- 6. BCH Usage (template slide 5) -->
+<section class="slide plain">
+  <div class="in" style="padding-top:36px">
+    <h1 class="center" style="font-weight:300; font-size:54px">BCH <span class="red" style="font-weight:800">Usage</span></h1>
+    <div class="grid2" style="margin-top:22px; grid-template-columns: .95fr 1.05fr; gap:26px">
+      <div class="panel" style="padding:18px 22px">
+        <ul style="padding-left:20px">
+          <li style="font-size:18px">CashScript covenant on a <b>P2SH32</b> address</li>
+          <li style="font-size:18px">State in one <b>mutable NFT</b> (CashTokens): <code>elapsed | spent</code>, 8 + 8 bytes</li>
+          <li style="font-size:18px">Transaction introspection fixes the shape: 1 input, back-to-contract + payment + receipt</li>
+          <li style="font-size:18px">Clock = <b>proven UTXO age</b> via relative locktime (CSV / BIP68), never the agent's word</li>
+          <li style="font-size:18px">Receipt: <code>OP_RETURN "LSH1" sha256(nonce|method|url|body)</code></li>
+          <li style="font-size:18px">Owner path: any tx that also spends the owner's P2PKH coin</li>
+          <li style="font-size:18px">Owner wallet over <b>WizardConnect</b>; payments over x402 v2 messages, our <code>leash</code> scheme</li>
+        </ul>
+      </div>
+      <div class="panel" style="background:#f7f7f7; color:#222; padding:16px 20px">
+<pre style="color:#222; font-size:15.5px">function pay(pubkey agentPk, sig agentSig, int elapsedAdd) {
+  // agent key, NFT category + capability, 3 outputs ...
+  int outflow = tx.inputs[0].value - tx.outputs[0].value;
+  require(outflow - amount &lt;= maxFee);        // fee cap
+  require(elapsedAdd &gt;= 0 &amp;&amp; elapsedAdd &lt; 65536);
+  require(this.age &gt;= elapsedAdd);           // CSV: proven age
+  int e = elapsed + elapsedAdd;
+  int s = spent + outflow;                    // fees count
+  if (e &gt;= period) { e = 0; s = outflow; }    // window rolls
+  require(s &lt;= limit, "pay: limit exceeded");
+  require(tx.outputs[0].nftCommitment ==
+          toPaddedBytes(e, 8) + toPaddedBytes(s, 8));
+}</pre>
+        <p class="tiny" style="color:#444; margin-top:10px">Simplified from <code>contracts/AgentLeash.cash</code> (CashScript 0.14).</p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- 7. Security -->
+<section class="slide">
+  <div class="in">
+    <div class="bar">Does it work? Tested like an attacker</div>
+    <div class="grid3">
+      <div class="panel"><p style="font-size:44px; font-weight:800; margin:0" class="ok">183</p><p class="small">automated tests (vitest, CashScript mock network that runs the covenant in the BCH VM), incl. <b>29 attacks</b> with the exact rejection text and a property test of the worst case (2 × limit around a reset)</p></div>
+      <div class="panel"><p style="font-size:44px; font-weight:800; margin:0" class="ok">Real</p><p class="small">chipnet runs with txids in the README: covenant, 402 paywall (also with 1 confirmation, a real block), web page, WizardConnect over the public relays, the agent</p></div>
+      <div class="panel"><p style="font-size:44px; font-weight:800; margin:0" class="warn">Unaudited</p><p class="small">prototype; 7 automated review rounds by another vendor's model (Google Jules: contract, paywall, WizardConnect), each finding fixed with a test or documented; no professional audit yet</p></div>
+    </div>
+    <div class="panel" style="margin-top:20px; padding:16px 24px">
+      <p class="small" style="margin-bottom:6px"><b>Traps we found and closed</b> (each has a test):</p>
+      <table style="font-size:15.5px">
+        <tr><td>fees outside the limit</td><td>many 546-sat payments burn several × the limit as fees → the limit counts payment + fee</td></tr>
+        <tr><td>CSV masking</td><td>BIP68 ignores bits above 16 and treats bit 22 as time → <code>elapsedAdd &lt; 65536</code></td></tr>
+        <tr><td>age off by one</td><td>age seen by the next block = tip + 1 − height, checked against a chipnet node</td></tr>
+        <tr><td>owner signature</td><td>the owner input must be <code>SIGHASH_ALL</code>, else others could rewrite a withdrawal (documented)</td></tr>
+        <tr><td>fake "attack" on a fresh window</td><td>(0, payment) is the honest state there → the demo does not build it (found while building the agent)</td></tr>
+      </table>
+    </div>
+  </div>
+</section>
+
+<!-- 8. Business -->
+<section class="slide">
+  <div class="in">
+    <div class="bar">Will it make money?</div>
+    <div class="grid2" style="grid-template-columns: 1fr 1fr">
+      <div class="panel">
+        <p><b>Who pays, and why</b></p>
+        <ul>
+          <li style="font-size:19px">Teams running AI agents that buy APIs and data
+            <ul><li>need a hard cap they do not have to trust, plus receipts per call</li></ul></li>
+          <li style="font-size:19px">API sellers who want agent customers
+            <ul><li>a 402 paywall that settles in BCH, ~0.2 cent fee per payment</li></ul></li>
+          <li style="font-size:19px">Wallets (Paytaca, Selene, Cashonize)
+            <ul><li>"agent allowance" as a wallet feature: distribution for us, a new use for them</li></ul></li>
+        </ul>
+      </div>
+      <div class="panel">
+        <p><b>Revenue to test</b> (proposed, not validated)</p>
+        <ul>
+          <li style="font-size:19px">Hosted 402 gateway for API sellers: a small take rate on settled payments</li>
+          <li style="font-size:19px">Managed leash for agent teams: policy templates, alerts, monitoring</li>
+          <li style="font-size:19px">Open core (MIT SDK and contract) keeps the trust story checkable</li>
+        </ul>
+        <p class="small" style="margin-top:14px"><b>Why BCH:</b> sub-cent fees for per-call payments, covenants and CashTokens on mainnet, no custodian in the path.</p>
+        <p class="small warn" style="margin:0"><b>Honest status:</b> prototype, no users, no revenue. Next: 5 conversations with agent builders before building more.</p>
+      </div>
+    </div>
+  </div>
+  <div class="fire"></div>
+</section>
+
+<!-- 9. Related work -->
+<section class="slide">
+  <div class="in">
+    <div class="bar">Related work, honestly</div>
+    <div class="panel" style="padding:20px 26px">
+      <p style="font-size:18px">Closest prior work: <b>FortressVault</b> (BCH BLAZE 2025, 2nd place, Mainnet Track): a covenant vault with a daily withdrawal limit kept in a mutable NFT, a rescue address, a live site. Same family of mechanism (state in an NFT, per-period limit). What AgentLeash adds (left column from its public project page, 2025):</p>
+      <table style="font-size:19px">
+        <tr><th></th><th>FortressVault (2025)</th><th>AgentLeash (2026)</th></tr>
+        <tr><td>Who spends</td><td>the owner, within a daily limit</td><td>a <b>separate agent key</b>; the owner exits without it</td></tr>
+        <tr><td>Fees</td><td class="muted">not checked by us</td><td><b>count against the limit</b>, fee cap; fee drain is a tested attack</td></tr>
+        <tr><td>Clock</td><td>daily window <span class="muted">(mechanism not checked)</span></td><td><b>proven UTXO age</b> (CSV) + the masking bound</td></tr>
+        <tr><td>Payees</td><td>any address, within the daily limit</td><td><b>up to 3 allow-listed</b></td></tr>
+        <tr><td>Payments for services</td><td class="muted">not described</td><td><b>402 paywall</b>, receipt bound to the HTTP request, agent loop</td></tr>
+        <tr><td>Public attack demo</td><td class="muted">not described</td><td>5 attacks broadcast, verbatim node refusal</td></tr>
+      </table>
+      <p class="small" style="margin-top:12px; color:#ccc">x402 on BCH elsewhere: <code>@x402/bch</code> (x402-foundation/x402 PR #3632, open on 15.10.2026, <code>exact</code> scheme, P2PKH inputs only) and an independent x402-bch facilitator. Neither spends from a covenant; the <code>leash</code> scheme does. We have not implemented <code>exact</code>.</p>
+    </div>
+  </div>
+</section>
+
+<!-- 10. Vision / roadmap (template slide 6) -->
+<section class="slide">
+  <div class="left-title"><h2>The Vision for AgentLeash</h2><div class="underline"></div></div>
+  <div class="right-panel panel" style="padding:24px 30px">
+    <p style="margin-bottom:14px; font-size:20px">Every AI agent that pays gets a leash by default: the budget lives on chain, not in a prompt.</p>
+    <table style="font-size:19px">
+      <tr><th>When</th><th>What</th><th>State</th></tr>
+      <tr><td>10–16.10</td><td>covenant, SDK, 402 paywall, WizardConnect owner path, web demo, agent</td><td><span class="tag g">done</span>chipnet</td></tr>
+      <tr><td>by 31.10</td><td>capped mainnet run (≤ 3 USD): genesis, agent payment, attack refused, withdraw</td><td><span class="tag y">planned</span>script ready</td></tr>
+      <tr><td>by 31.10</td><td>real wallet apps sign the owner path (Paytaca, Cashonize, Selene)</td><td><span class="tag y">planned</span>Paytaca's code: pass</td></tr>
+      <tr><td>31.10</td><td>contract freeze (tag), external review round</td><td><span class="tag y">planned</span></td></tr>
+      <tr><td>November</td><td>mainnet demo leash on the site, submission</td><td><span class="tag y">planned</span></td></tr>
+      <tr><td>next</td><td>limits in a stablecoin CashToken (e.g. PUSD), <code>exact</code> scheme, sliding window, audit</td><td><span class="tag">roadmap</span></td></tr>
+    </table>
+    <p class="small" style="margin-top:14px; color:#ccc">Target: the default way an agent pays for an API on BCH. No user or revenue numbers yet; we will not invent any.</p>
+  </div>
+  <div class="fire"></div>
+</section>
+
+<!-- 11. Thank you (template slide 7) -->
+<section class="slide plain" style="background:#050506 url(assets/bg_title.jpg) center/cover">
+  <div class="in center" style="padding-top:150px">
+    <h1 style="font-size:96px; letter-spacing:1px">THANK YOU!</h1>
+    <p class="lead" style="margin-top:34px">Try to steal the demo agent's money:</p>
+    <p style="font-size:26px; margin-top:6px"><a>https://ttimesai-star.github.io/agentleash-bch/</a></p>
+    <p style="font-size:20px; margin-top:18px" class="muted">Source, tests, chipnet logs: github.com/ttimesai-star/agentleash-bch · MIT</p>
+    <p class="small warn" style="margin-top:30px">Prototype, unaudited. Do not put real money in it beyond the capped demo.</p>
+  </div>
+</section>
+
+</body>
+</html>
