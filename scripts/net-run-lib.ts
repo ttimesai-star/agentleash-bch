@@ -94,6 +94,8 @@ export function loadKeys(net: Net, secretsDir: string, forbiddenPrivs: Set<strin
     const m = JSON.parse(readFileSync(f, 'utf8'));
     if (m.network !== 'mainnet') throw new Error(`refusing: ${f} must contain "network": "mainnet" (found ${JSON.stringify(m.network)})`);
     if (m.owner?.network !== undefined && m.owner.network !== 'mainnet') throw new Error(`refusing: owner entry says network=${m.owner.network}`);
+    // Jules review 17.10: same rule for the payee entry (its address prefix is checked below as well)
+    if (m.payee?.network !== undefined && m.payee.network !== 'mainnet') throw new Error(`refusing: payee entry says network=${m.payee.network}`);
     owner = m.owner; payeeAddress = m.payee?.address;
   }
   if (!owner || typeof owner.privHex !== 'string' || !PRIV_RE.test(owner.privHex)) throw new Error('owner.privHex must be 64 hex chars');

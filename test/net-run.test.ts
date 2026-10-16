@@ -212,6 +212,12 @@ describe('net-run: keys and the mainnet barrier', () => {
     mainFile({ ...good(), payee: { address: mainAddr(owner) } });
     expect(() => loadKeys('mainnet', dir)).toThrow(/payee must differ/);
   });
+  it('payee entry saying another network is refused even with a mainnet address (Jules review 17.10)', () => {
+    mainFile({ ...good(), payee: { network: 'chipnet', address: mainAddr(payee) } });
+    expect(() => loadKeys('mainnet', dir)).toThrow(/payee entry says network=chipnet/);
+    mainFile({ ...good(), payee: { network: 'mainnet', address: mainAddr(payee) } });
+    expect(loadKeys('mainnet', dir).payeeAddress).toBe(mainAddr(payee));
+  });
   it('a chipnet or public demo key copied into the mainnet file is refused', () => {
     const chip = { network: 'chipnet', wallets: [{ network: 'chipnet', privHex: binToHex(owner.priv) }] };
     writeFileSync(join(dir, 'bch_chipnet_wallets.json'), JSON.stringify(chip));
