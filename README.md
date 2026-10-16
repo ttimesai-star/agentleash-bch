@@ -9,21 +9,49 @@ Built for BCH BLAZE 2026. License: MIT.
 **Live demo (chipnet): https://ttimesai-star.github.io/agentleash-bch/**: open it, you are the agent of a
 public demo leash whose agent key is published on purpose. Buy a tool over 402, then try to steal the money.
 
+Presentation (BCH BLAZE "Widget Factory" template): [`docs/AgentLeash_BLAZE2026.pdf`](docs/AgentLeash_BLAZE2026.pdf).
+
+## For judges: check it in 5 minutes
+
+| Min | Do this | You should see |
+|---|---|---|
+| 1 | Open the [live demo](https://ttimesai-star.github.io/agentleash-bch/), click **Run the agent (3 tools)** | the agent plans each step, gets `402 Payment Required`, pays from the leash, the tool answers; a chipnet txid per call; the gauge moves |
+| 2 | Click **Run until the leash says no** (or keep buying by hand) | the agent's own SDK refuses **before signing**: `limit exceeded: N of 12000 sats spent ... M left` |
+| 3 | "Try to break it": press each of the 5 buttons | each signs a real rule-breaking transaction with the published agent key; the node refuses it, shown **verbatim** (`mandatory-script-verify-flag-failed`, `non-BIP68-final`) plus the contract rule that failed |
+| 4 | Journal; click any txid | every payment on [chaingraph](https://chipnet.chaingraph.cash) with its `OP_RETURN "LSH1"` receipt |
+| 5 | Optional, in a terminal: `git clone https://github.com/ttimesai-star/agentleash-bch && cd agentleash-bch && npm ci && npm test && npm run agent` | 183 tests pass; the agent runs offline on a mock network that executes the real covenant, then a compromised phase whose rule-breaking transactions are refused. `npm run agent:chipnet` does the same with real chipnet transactions on the public demo leash (no keys needed) |
+
+The public demo leash is shared: if other visitors used up its window (12 000 sats per 6 blocks), the agent is
+refused right away. That is the leash working; the window reopens after the blocks shown on the page. You can also
+create your own leash with free chipnet coins ("Create your own").
+
+### What works today (chipnet, with txids in this README) and what is planned
+
+| | State |
+|---|---|
+| Covenant: budget per window incl. fees, 3 payees, fee cap, proven-age clock, owner exit | **works on chipnet**, 183 tests incl. 29 attacks |
+| 402 paywall (`leash` scheme) + agent client, incl. 1-confirmation settlement | **works on chipnet** |
+| Demo agent (scripted planner, or any OpenAI-compatible LLM with your key) | **works on chipnet** (16.10.2026, see "Demo agent") |
+| Web demo: autopilot, tools, 5 attacks, journal, create / top up / withdraw | **live on chipnet**, Electrum failover between two public servers |
+| WizardConnect owner path | **works** with a headless wallet over the public relays and with Paytaca's own signing code; **not yet tested** in the Paytaca, Cashonize and Selene apps |
+| Mainnet | **planned, not done**: one capped run (owner funds at most ~3 USD: genesis, an agent payment, an attack the network refuses, withdraw) with `scripts/net-run.ts`; the script is rehearsed on chipnet. Mainnet txids will be added here after the run; until then nothing in this README claims mainnet |
+
 ## Status (honest): prototype, unaudited
 
 **Prototype, unaudited. Chipnet only for now. Do not put real money in it.** No external users yet; no
 professional audit; the contract is not frozen. A capped mainnet run is prepared (see "Mainnet run"), not done.
 
-| Part | State (15.10.2026) |
+| Part | State (16.10.2026) |
 |---|---|
 | `contracts/AgentLeash.cash` (CashScript 0.14) | v0. Two automated review passes (Jules, `REVIEW.md`), not a professional audit. Not frozen. |
 | TypeScript SDK (`src/`) | genesis, pay, top-up, withdraw, receipt + request-hash helpers |
 | WizardConnect owner path (`src/wc.ts`) | sign-request builder, relay serialization, reference signer for tests, VM verification. Live relay round trip PASS. Paytaca's own signing code (pinned commit) signs genesis, top-up and withdraw, offline and over the relay through Paytaca's own connection manager: PASS. **The Paytaca app on a phone is not yet tested** (UI only, see below). |
 | 402 paywall, `leash` scheme (`src/x402.ts`, `src/x402-client.ts`, `src/http.ts`) | works on mock and on chipnet (real transactions, see below). `exact` scheme not implemented and not advertised. |
-| Tests (vitest, MockNetworkProvider with validation) | **159**: 94 stage-1 (happy paths, 29 attacks, owner path, property test, 39 from two review passes) + 9 WizardConnect (incl. Jules round 5: tuple/path/index validation, `verifySigned(tx, src, expectedTxHex)` refuses a wallet that changed inputs or outputs) + 7 "try to break it" builders (`src/attacks.ts`) + 49 paywall/agent (incl. Jules review fixes: dust floor, nonce cap, header case, minConfirmations; round 2: "already known" broadcast checked against the node, handler failure after payment, 429 when every nonce is in flight, poll retry; round 3: retry during an in-flight broadcast gets 202, abort ends the confirmation wait at once; round 4: Electrum confirmation errors count as 0, Headers/tuple request headers kept) |
+| Tests (vitest, MockNetworkProvider with validation) | **183** (16.10.2026): 159 below + 15 demo agent (`test/agent.test.ts`: pays until the window refuses, compromised phase refused, maxPrice / allow-list / node refusal classified, LLM planner over a fake OpenAI-compatible API, real HTTP) + 8 Electrum failover + 1 fake-reset guard. The 159: 94 stage-1 (happy paths, 29 attacks, owner path, property test, 39 from two review passes) + 9 WizardConnect (incl. Jules round 5: tuple/path/index validation, `verifySigned(tx, src, expectedTxHex)` refuses a wallet that changed inputs or outputs) + 7 "try to break it" builders (`src/attacks.ts`) + 49 paywall/agent (incl. Jules review fixes: dust floor, nonce cap, header case, minConfirmations; round 2: "already known" broadcast checked against the node, handler failure after payment, 429 when every nonce is in flight, poll retry; round 3: retry during an in-flight broadcast gets 202, abort ends the confirmation wait at once; round 4: Electrum confirmation errors count as 0, Headers/tuple request headers kept) |
 | Chipnet | stage-1 scenario (covenant) and stage-2 scenario (402 server + agent), logs in `scripts/` |
 | Web UI (`web/`, static, GitHub Pages) | **live on chipnet** (16.10.2026): network flag (chipnet default, mainnet locked by a build flag), public demo leash, 3 paid tools over the 402 `leash` scheme, "try to break it" (5 attacks broadcast to the node, verbatim refusal shown), journal from the chain, create / top up / withdraw by the owner via WizardConnect or a chipnet-only browser key. End-to-end in headless Chromium, see "Web demo" |
-| LLM agent, mainnet | not started; mainnet script prepared and rehearsed on chipnet (`scripts/net-run.ts`) |
+| Demo agent (`src/agent.ts`, `scripts/agent.ts`) | **works on chipnet** (16.10.2026): planner (scripted, or any OpenAI-compatible LLM) chooses tools, pays each over 402 from the leash, refused before signing past the window; compromised phase broadcasts rule-breaking transactions, the node refuses. Web page: same loop as an autopilot button |
+| Mainnet | **not done**; capped run script prepared and rehearsed on chipnet (`scripts/net-run.ts`) |
 
 ## How it works
 
@@ -201,6 +229,47 @@ Known limits of the server: nonces live in memory (one process; a restart forget
 settlement is 0-conf by default (a payer could try a double spend before confirmation; double-spend proofs are not
 checked; `minConfirmations` trades that for a wait of about 10 minutes per block); the package entry imports `node:http`; browsers use `src/browser.ts` (same SDK without the HTTP adapter; the paywall itself no longer needs `Buffer` or `node:crypto`).
 
+## Demo agent (`npm run agent`, `npm run agent:chipnet`)
+
+An agent that actually lives on the leash: `src/agent.ts` (loop, planners, journal), `scripts/agent.ts` (one command).
+
+- **Phase 1, the agent works.** A planner chooses the next step (call a tool or finish). The agent calls the tool over
+  real HTTP: its own 402 tool server (`LeashPaywall` + `servePaywall`, 3 tools: chain tip, BCH price, fortune) runs on
+  127.0.0.1; `leashFetch` answers each `402` with a covenant payment carrying an `LSH1` receipt bound to the request; the
+  server broadcasts it and serves. Every step goes to a journal (console; chipnet runs also to
+  [`scripts/agent-chipnet-log.jsonl`](scripts/agent-chipnet-log.jsonl)). Refusals are labelled by who refused:
+  `sdk` (before signing: over the window, price above `maxPrice`, payee not on the allow-list), `server`, `network` (the
+  node rejected the broadcast), `agent` (the planner asked for a tool that does not exist).
+- **Phase 2, the agent is compromised.** It ignores its SDK and signs raw transactions that break one rule each
+  (`src/attacks.ts`) and broadcasts them. Any acceptance would be reported as `BREACH` and exit code 2.
+- **Planner.** Default: a scripted planner (no model, deterministic; asks past the budget on purpose so the leash has to
+  say no). With `AGENT_LLM_BASE_URL`, `AGENT_LLM_API_KEY`, `AGENT_LLM_MODEL` set, an LLM over any OpenAI-compatible
+  chat API chooses instead. The model only picks a tool or finishes; it never sees a key and cannot choose a payee or an
+  amount; tool answers are passed to it as untrusted data. Checked on 16.10.2026 on the mock network with
+  `openai/gpt-oss-20b` on NVIDIA NIM (it bought the 3 tools and finished with a brief); free tiers of other providers
+  answered 403/402/429 that day, which the planner reports as an error.
+- **Networks.** `mock` (default): CashScript's MockNetworkProvider, which executes the covenant in the BCH VM for every
+  broadcast; no coins, works offline. `--net chipnet`: the public demo leash of the web page (agent key published in
+  `web/src/demo.json`), so no secret is needed. Mainnet is refused by this script.
+
+Chipnet run, 16.10.2026 (`npm run agent:chipnet`, scripted planner, public demo leash
+`bchtest:rw2x8a46d9xm0u8zqxyfej0n04znxglu6a4twu53rfkx5pgpasw3sva873j5u`, 12 000 sats per 6 blocks, fee cap 2 000):
+
+| Step | Result | txid / response |
+|---|---|---|
+| 1 chain_tip, 402, pays 1 000 | 200, block 328162 | `51fbf483111a2360ea31ac59cce8cc7bd82182c1f04caa05b7747640054a37e7` |
+| 2 bch_price, pays 1 500 | 200, BCH 273.92 USD (CoinGecko) | `504ade2ce2d7bfde695b4d23aeeadbb422fd2d3cf2c15cda0703094b6f73ac2c` |
+| 3 fortune, pays 600 | 200 | `edcc9ea0edfb571f67f7d4eac1f8a19b9ac5368a6291c47616d6432b67b5dcd3` |
+| 4-6 chain_tip (keep watching) | 200 each | `d87f4d1c…40307`, `4f974abd…35237`, `8327d31f…f39c36` |
+| 7 chain_tip | refused before signing | `limit exceeded: 10331 of 12000 sats spent in this window, 1705 requested (payment + fee), 1669 left` |
+| compromised: pay a non-allow-listed address | rejected by the node | `mandatory-script-verify-flag-failed (Script failed an OP_VERIFY operation) (code 16)`; rule `pay: recipient not allow-listed` |
+| compromised: 1 sat over the limit | rejected by the node | same; rule `pay: limit exceeded` |
+| compromised: fast-forward the clock | rejected by consensus | `non-BIP68-final (code 64)` |
+
+Found while building it: on a fresh window (state 0, 0) the "fake reset" attack is the honest next state, so the
+network rightly accepts it and the demo would have shown a false breach. `buildAttack('fakereset')` now refuses to
+build it there (test in `test/attacks.test.ts`).
+
 ## WizardConnect status
 
 WizardConnect is Riften Labs' dapp-to-HD-wallet protocol over an encrypted Nostr relay (`hdwalletv1`),
@@ -241,6 +310,8 @@ npx tsx scripts/wc-relay-smoke.ts                     # WizardConnect relay roun
 npx tsx scripts/paytaca-compat.ts [--relay [--late 45] | --phone]  # Paytaca's own signer on our requests
 npx tsx scripts/demo-leash.ts status|create|topup <sats>             # public demo leash of the web page (chipnet)
 npx tsx scripts/net-run.ts chipnet|mainnet status|run [--broadcast]  # capped end-to-end run
+npm run agent                                                        # demo agent, mock network (offline)
+npm run agent:chipnet                                                # demo agent, real chipnet, public demo leash
 npx tsx scripts/wc-test-wallet.ts address|connect                    # headless WizardConnect wallet (URI in WIZ_URI)
 npm run web:dev                                                      # web demo locally; npm run web:build -> web/dist
 ```
@@ -273,6 +344,7 @@ What a judge can do in about a minute, without coins and without a wallet:
 
 | # | Click | What happens on chain |
 |---|---|---|
+| 0 | "Run the agent" / "Run until the leash says no" | the demo agent (same loop as `npm run agent`, scripted planner) works through its goal: plan, 402, payment, answer, per step with txids; the long run ends with the refusal before signing |
 | 1 | open the page | the **public demo leash** loads: 12 000 sats per 6 blocks, one allowed payee (the demo tool); balance and window are read from the chain |
 | 2 | "Chain tip" / "BCH price" / "Agent fortune" | the agent gets `402`, signs a covenant payment with an `LSH1` receipt bound to the request, the tool settles it and answers; the payment txid is shown and the gauge moves |
 | 3 | "Try to break it": any of 5 attacks | the page signs a raw transaction with the (published) agent key that breaks one rule and broadcasts it; the node's refusal is shown verbatim, plus the contract `require` that failed |
@@ -296,9 +368,11 @@ How the page was tested (16.10.2026, headless Chromium against the built site an
 | owner via browser key (chipnet): create, agent pays a tool, top up, withdraw | all accepted | `f6af1690…`, `4e7b9bcf…`, `536f3b07…`, `8e654929…` |
 
 Not yet tested with the page: the real Cashonize web, Selene and Paytaca apps (needs a person with the wallet; the
-protocol path is the one the headless wallet exercised). Known issue: the default chipnet Electrum server
-(`chipnet.bch.ninja`) sometimes times out a WebSocket connect; the page re-reads every 30 s, and an action that hits
-the timeout shows the error and can be repeated.
+protocol path is the one the headless wallet exercised). Electrum: `chipnet.bch.ninja` sometimes times out a WebSocket
+connect, so the page (and the agent script) use `FailoverProvider` (`src/failover.ts`): a connection failure or a hang
+moves the request to `chipnet.imaginary.cash` (both checked 16.10.2026); a node's refusal is never retried elsewhere.
+The page holds no server of its own (static site; the 402 tool server runs in the page), so there is no backend to fall
+over.
 
 ## Mainnet run (prepared, not done)
 
@@ -348,7 +422,7 @@ mainnet run above.
 | 14-17.10 | Real wallet: Paytaca (chipnet) signs genesis, top-up and withdraw built by `toWizardSignRequest`; try Selene | Paytaca's signing code and connection manager: PASS 15.10 (`scripts/paytaca-compat.ts`). Left: one run with the app on a phone (`--phone`), then real chipnet txids signed in the app |
 | 18-24.10 | Web UI: connect, create, fund, withdraw, journal, "try to break it"; separate browser entry point (`src/browser.ts`) | **done early, 16.10**: live page on chipnet (vanilla TS + Vite, `@wizardconnect/dapp`) |
 | 18-24.10 | `exact` scheme next to `leash`, checked against `@x402/bch` | interop test passes |
-| 25-30.10 | LLM agent with three paid tools; Jules review #3, a second-vendor review, Semgrep / npm audit / gitleaks | findings fixed or documented |
+| 25-30.10 | Agent with three paid tools (**done early, 16.10**: scripted or LLM planner, chipnet run above); presentation PDF (**draft done 16.10**); Jules review of the agent, a second-vendor review, Semgrep / npm audit / gitleaks | findings fixed or documented |
 | 31.10 | Code freeze of the contract | tag |
 | 01-10.11 | Mainnet: one small leash (owner funds at most ~10 USD), demo hosting | mainnet txids in this README |
 | 11-17.11 | Video (no face, no voice), submission text; internal deadline 17.11 | submitted draft |
@@ -357,5 +431,5 @@ mainnet run above.
 ## Roadmap
 
 - `exact` scheme (standard P2PKH, compatible with `@x402/bch`, x402-foundation/x402 PR #3632 at `b297bc3`) next to the working `leash` scheme.
-- LLM agent that chooses and pays for tools on its own (the web demo's agent is button-driven).
+- Limits in a stablecoin CashToken (e.g. ParyonUSD) instead of sats; sliding window.
 - Security review and code freeze before any mainnet deployment.
