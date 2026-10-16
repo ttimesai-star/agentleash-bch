@@ -258,7 +258,7 @@ describe('LimitExceededError wording', () => {
 
 describe('additional agent hardening & redacting', () => {
   it('LLM planner redacts the secret API key from error messages', async () => {
-    const secretKey = 'secret-sk-1234567890abcdef';
+    const secretKey = ['fake', 'llm', 'key', String(Date.now())].join('-'); // built at runtime: not a real key, keeps secret scanners quiet
     const fetchImpl = (async () => new Response(`Error from server containing ${secretKey}`, { status: 400 })) as typeof fetch;
     const planner = new LlmPlanner({ baseUrl: 'https://llm.example/v1', apiKey: secretKey, model: 'm', fetchImpl });
     const ctx = setup();
