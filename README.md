@@ -19,7 +19,7 @@ Presentation (BCH BLAZE "Widget Factory" template): [`docs/AgentLeash_BLAZE2026.
 | 2 | Click **Run until the leash says no** (or keep buying by hand) | the agent's own SDK refuses **before signing**: `limit exceeded: N of 12000 sats spent ... M left` |
 | 3 | "Try to break it": press each of the 5 buttons | each signs a real rule-breaking transaction with the published agent key; the node refuses it, shown **verbatim** (`mandatory-script-verify-flag-failed`, `non-BIP68-final`) plus the contract rule that failed |
 | 4 | Journal; click any txid | every payment on [chaingraph](https://chipnet.chaingraph.cash) with its `OP_RETURN "LSH1"` receipt |
-| 5 | Optional, in a terminal: `git clone https://github.com/ttimesai-star/agentleash-bch && cd agentleash-bch && npm ci && npm test && npm run agent` | 187 tests pass; the agent runs offline on a mock network that executes the real covenant, then a compromised phase whose rule-breaking transactions are refused. `npm run agent:chipnet` does the same with real chipnet transactions on the public demo leash (no keys needed) |
+| 5 | Optional, in a terminal: `git clone https://github.com/ttimesai-star/agentleash-bch && cd agentleash-bch && npm ci && npm test && npm run agent` | 208 tests pass; the agent runs offline on a mock network that executes the real covenant, then a compromised phase whose rule-breaking transactions are refused. `npm run agent:chipnet` does the same with real chipnet transactions on the public demo leash (no keys needed) |
 
 The public demo leash is shared: if other visitors used up its window (12 000 sats per 6 blocks), the agent is
 refused right away. That is the leash working; the window reopens after the blocks shown on the page. You can also
@@ -47,7 +47,7 @@ professional audit; the contract is not frozen. A capped mainnet run is prepared
 | TypeScript SDK (`src/`) | genesis, pay, top-up, withdraw, receipt + request-hash helpers |
 | WizardConnect owner path (`src/wc.ts`) | sign-request builder, relay serialization, reference signer for tests, VM verification. Live relay round trip PASS. Paytaca's own signing code (pinned commit) signs genesis, top-up and withdraw, offline and over the relay through Paytaca's own connection manager: PASS. **The Paytaca app on a phone is not yet tested** (UI only, see below). |
 | 402 paywall, `leash` scheme (`src/x402.ts`, `src/x402-client.ts`, `src/http.ts`) | works on mock and on chipnet (real transactions, see below). `exact` scheme not implemented and not advertised. |
-| Tests (vitest, MockNetworkProvider with validation) | **187** (16.10.2026): 159 below + 17 demo agent (`test/agent.test.ts`: pays until the window refuses, compromised phase refused, maxPrice / allow-list / node refusal classified, LLM planner over a fake OpenAI-compatible API, real HTTP) + 10 Electrum failover + 1 fake-reset guard (incl. Jules round 6, REVIEW.md stage 3). The 159: 94 stage-1 (happy paths, 29 attacks, owner path, property test, 39 from two review passes) + 9 WizardConnect (incl. Jules round 5: tuple/path/index validation, `verifySigned(tx, src, expectedTxHex)` refuses a wallet that changed inputs or outputs) + 7 "try to break it" builders (`src/attacks.ts`) + 49 paywall/agent (incl. Jules review fixes: dust floor, nonce cap, header case, minConfirmations; round 2: "already known" broadcast checked against the node, handler failure after payment, 429 when every nonce is in flight, poll retry; round 3: retry during an in-flight broadcast gets 202, abort ends the confirmation wait at once; round 4: Electrum confirmation errors count as 0, Headers/tuple request headers kept) |
+| Tests (vitest, MockNetworkProvider with validation) | **208** (17.10.2026): 187 below + 20 capped-run script (`test/net-run.test.ts`, security review 16.10: state on disk before the first broadcast, lost genesis response, crash after genesis then `withdraw` from the file, rejected withdraw, loss ceiling, mainnet barrier, chipnet key in the mainnet file) + 1 `validateParams` hardening. The 187: 159 below + 17 demo agent (`test/agent.test.ts`: pays until the window refuses, compromised phase refused, maxPrice / allow-list / node refusal classified, LLM planner over a fake OpenAI-compatible API, real HTTP) + 10 Electrum failover + 1 fake-reset guard (incl. Jules round 6, REVIEW.md stage 3). The 159: 94 stage-1 (happy paths, 29 attacks, owner path, property test, 39 from two review passes) + 9 WizardConnect (incl. Jules round 5: tuple/path/index validation, `verifySigned(tx, src, expectedTxHex)` refuses a wallet that changed inputs or outputs) + 7 "try to break it" builders (`src/attacks.ts`) + 49 paywall/agent (incl. Jules review fixes: dust floor, nonce cap, header case, minConfirmations; round 2: "already known" broadcast checked against the node, handler failure after payment, 429 when every nonce is in flight, poll retry; round 3: retry during an in-flight broadcast gets 202, abort ends the confirmation wait at once; round 4: Electrum confirmation errors count as 0, Headers/tuple request headers kept) |
 | Chipnet | stage-1 scenario (covenant) and stage-2 scenario (402 server + agent), logs in `scripts/` |
 | Web UI (`web/`, static, GitHub Pages) | **live on chipnet** (16.10.2026): network flag (chipnet default, mainnet locked by a build flag), public demo leash, 3 paid tools over the 402 `leash` scheme, "try to break it" (5 attacks broadcast to the node, verbatim refusal shown), journal from the chain, create / top up / withdraw by the owner via WizardConnect or a chipnet-only browser key. End-to-end in headless Chromium, see "Web demo" |
 | Demo agent (`src/agent.ts`, `scripts/agent.ts`) | **works on chipnet** (16.10.2026): planner (scripted, or any OpenAI-compatible LLM) chooses tools, pays each over 402 from the leash, refused before signing past the window; compromised phase broadcasts rule-breaking transactions, the node refuses. Web page: same loop as an autopilot button |
@@ -104,6 +104,14 @@ Changing them = owner migrates the NFT and funds to a new address.
 - The owner path trusts the owner's wallet: the owner input must be signed with `SIGHASH_ALL`
   (the default in CashScript and in common BCH wallets). A `NONE`/`SINGLE`/`ANYONECANPAY` signature
   on that input would let others rewrite the withdrawal outputs (review AL-08).
+- **Use a dedicated owner address** that holds nothing else and signs nothing else (review AL-08, security review
+  16.10). The owner path only checks that *some* input is locked by `ownerLock`; if the same key ever signs a
+  partial transaction (`ANYONECANPAY`, e.g. a marketplace offer or a coinjoin), that input can be glued to the
+  leash input and the whole leash drained by whoever holds the partial transaction.
+- The SDK refuses unsafe parameters before genesis (`validateParams`): `ownerLock` must be a standard P2PKH script,
+  allow-list entries must be P2PKH / P2SH20 / P2SH32 (no `OP_1` anyone-can-spend, no `OP_RETURN` burn), and the
+  agent key must differ from the owner key. The contract itself does not check these; a hand-made deployment can
+  skip them.
 - The allow-list is the owner's trust decision: if an allow-listed script forwards funds to the agent,
   the contract cannot see it (review AL-09). Use plain P2PKH payees you control or trust.
 - One state UTXO = payments are strictly sequential (unconfirmed chains are fine, `elapsedAdd = 0`).
@@ -229,6 +237,15 @@ Known limits of the server: nonces live in memory (one process; a restart forget
 settlement is 0-conf by default (a payer could try a double spend before confirmation; double-spend proofs are not
 checked; `minConfirmations` trades that for a wait of about 10 minutes per block); the package entry imports `node:http`; browsers use `src/browser.ts` (same SDK without the HTTP adapter; the paywall itself no longer needs `Buffer` or `node:crypto`).
 
+Before running the paywall with real money (security review 16.10):
+- **HTTPS outside localhost.** `PAYMENT-SIGNATURE` is a bearer token: whoever sees the header before the server
+  does can submit the same signed payment for their own request on the same nonce. Plain HTTP only on localhost.
+- **`minConfirmations` defaults to 0.** At 0 the payer (the agent, or the owner through the owner path) can
+  double-spend the leash coin after the content is served and leave the server unpaid. Set `minConfirmations: 1`
+  or more when the content is worth more than the payment you are willing to lose.
+- `electrumConfirmations(provider)` trusts one Electrum server for the confirmation count; for real money ask two
+  independent servers, or your own node.
+
 ## Demo agent (`npm run agent`, `npm run agent:chipnet`)
 
 An agent that actually lives on the leash: `src/agent.ts` (loop, planners, journal), `scripts/agent.ts` (one command).
@@ -317,7 +334,7 @@ npx tsx scripts/x402-chipnet.ts status|run|withdraw   # 402 server + agent on ch
 npx tsx scripts/wc-relay-smoke.ts                     # WizardConnect relay round trip
 npx tsx scripts/paytaca-compat.ts [--relay [--late 45] | --phone]  # Paytaca's own signer on our requests
 npx tsx scripts/demo-leash.ts status|create|topup <sats>             # public demo leash of the web page (chipnet)
-npx tsx scripts/net-run.ts chipnet|mainnet status|run [--broadcast]  # capped end-to-end run
+npx tsx scripts/net-run.ts chipnet|mainnet status|run|withdraw [--broadcast]  # capped end-to-end run
 npm run agent                                                        # demo agent, mock network (offline)
 npm run agent:chipnet                                                # demo agent, real chipnet, public demo leash
 npx tsx scripts/wc-test-wallet.ts address|connect                    # headless WizardConnect wallet (URI in WIZ_URI)
@@ -367,6 +384,11 @@ Network flag: `?net=chipnet` (default) / `?net=mainnet`. Mainnet is locked unles
 `VITE_ALLOW_MAINNET=1`; unlocked, it caps the fund at 200 000 sats and the limit at 50 000 sats and offers no
 browser-held owner key (WizardConnect only).
 
+**Keys in the browser (chipnet only):** the page keeps the leashes you create, the chipnet browser owner key and the
+agent keys in `localStorage` of `ttimesai-star.github.io`. That origin is shared by every GitHub Pages site of the
+account, so any of them could read those keys. Fine for chipnet coins; before a mainnet build
+(`VITE_ALLOW_MAINNET=1`) the page must move to a dedicated domain, and owner keys stay in the wallet (WizardConnect).
+
 How the page was tested (16.10.2026, headless Chromium against the built site and real chipnet):
 
 | Path | Result | txids |
@@ -385,13 +407,43 @@ over.
 
 ## Mainnet run (prepared, not done)
 
-`scripts/net-run.ts <chipnet|mainnet> run [--broadcast]`: genesis, one agent payment with a receipt, one attack the
-network must refuse, owner withdraws everything; each broadcast is logged to `scripts/<net>-run-log.jsonl`.
-Without `--broadcast` it only builds and checks the first transaction. Mainnet also needs
-`AGENTLEASH_MAINNET_OK=yes` (set only after the owner of the funds approved) and enforces caps: fund 20 000 sats,
-limit 6 000, fee cap 1 500, owner spend 30 000 sats per run. Rehearsed on chipnet on 16.10.2026
-(`scripts/chipnet-run-log.jsonl`): genesis `c6acbe41…`, payment `4a904e78…`, attack rejected
-(`mandatory-script-verify-flag-failed`), withdraw `1829c12e…`.
+`scripts/net-run.ts` (logic in `scripts/net-run-lib.ts`, 20 tests in `test/net-run.test.ts`):
+
+```bash
+npx tsx scripts/net-run.ts <chipnet|mainnet> status                 # balances, caps, last run, mainnet confirmation string
+npx tsx scripts/net-run.ts <chipnet|mainnet> run      [--broadcast] # genesis, agent pays once, attack refused, owner withdraws
+npx tsx scripts/net-run.ts <chipnet|mainnet> withdraw [--broadcast] # recover an interrupted run from local/net-run-<net>.json
+```
+
+- Without `--broadcast` nothing is sent and nothing is written; every owner transaction is built and checked locally.
+- **Recovery.** Before the first broadcast the run state (agent key, every contract parameter, planned txids) is
+  written atomically (temp file + fsync + rename) to `local/net-run-<net>.json` (gitignored). If the process dies or
+  a broadcast response is lost, `withdraw --broadcast` rebuilds the leash from that file and sweeps it back to the
+  owner, or closes the run when the genesis never reached the network. A new run is refused while the last one is open.
+- **Exit codes:** 0 ok; 1 funds may still be on the leash (run `withdraw`); 2 refused before sending; 3 the run ended
+  and the funds are back with the owner, but a demo step failed.
+- **Loss ceiling before any send:** fund + self-send / genesis / withdraw fee caps <= `maxLoss` (mainnet 23 000 sats,
+  absolute ceiling 25 000 sats); each fee is checked against its cap on the built transaction before broadcast.
+- **Keys:** the owner address is derived from the key and must equal the one in the secrets file; the mainnet file
+  must say `"network": "mainnet"` and its key must not be any key known from the chipnet secrets, chipnet runs or the
+  public web demo. Use a dedicated owner key (AL-08 above).
+- **Mainnet barrier:** `AGENTLEASH_MAINNET_OK=yes` (set only after the owner of the funds approved) **and**
+  `--confirm-mainnet=<loss ceiling in sats>:<last 6 chars of the owner address>` (printed by `status` after the caps).
+  `withdraw` needs only the env flag: it can pay only the owner. Each broadcast is logged to `scripts/<net>-run-log.jsonl`.
+
+Chipnet rehearsal, 17.10.2026 (`scripts/chipnet-run-log.jsonl`), with the script as above:
+
+| Step | Result | txid |
+|---|---|---|
+| genesis, 30 000 sats, fee 285 | accepted | `cd692bcf37c3dfd3bc82b1c30469cdc80458283eef49f335a86a7bc5dc34bab9` |
+| agent pays 1 000 sats with a receipt | accepted | `6b341ff45417e5391718ce7b9089ca7f9ae5a9a340c7d1d6d77c5f2b19ae298a` |
+| attack: pay a non-allow-listed address | rejected: `mandatory-script-verify-flag-failed` (local: `pay: recipient not allow-listed`) | — |
+| owner withdraws 28 295 sats | accepted, run closed, exit 0 | `8d83d734ac6450b8e82de85e32cace2446c0ccb8e0a0d265b71a51c4d3126c6e` |
+| crash test: genesis broadcast, process exits without recording it | `status` shows the open run; a new `run` is refused (exit 2) | `7736dc128c308cacb7c25b6e680a99a1fcb24d70db3dc7a887a9a167be38306f` |
+| `withdraw --broadcast` from the state file alone | 30 000 sats back to the owner, run closed; repeated `withdraw` exits 0 | `e8ba0cc98e20269feda5e9524ebf39f69b422c9b40ed718fdff9d83502af7003` |
+
+Earlier rehearsal (16.10.2026, previous script version): genesis `c6acbe41…`, payment `4a904e78…`, attack rejected,
+withdraw `1829c12e…`.
 
 ## Related work (honest)
 
