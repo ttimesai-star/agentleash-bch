@@ -1,0 +1,2 @@
+# fake LLM key literal in a test (removed in ff5f27d), security review 16.10 section 5
+a6fa0ad278ee610a8dc29e5c756bfe1ab898d056:test/agent.test.ts:generic-api-key:261
