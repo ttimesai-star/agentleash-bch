@@ -1,15 +1,15 @@
 import './style.css';
 import { binToHex, decodeTransaction, hexToBin } from '@bitauth/libauth';
-import { TransactionBuilder, type ElectrumNetworkProvider } from 'cashscript';
+import { TransactionBuilder } from 'cashscript';
 import qrcode from 'qrcode-generator';
 import {
   ATTACKS, AgentLeash, buildAttack, buildGenesis, localReason, pkhOfPrivateKey, placeholderBytes, withAutoFee,
-  type AttackKind, type LeashParams,
+  type AgentEvent, type AttackKind, type FailoverProvider, type LeashParams,
 } from '../../src/browser.js';
 import { ALLOW_MAINNET, NETWORKS, initialNetwork, type NetConfig, type NetName } from './config.js';
 import { addressOf, journal, lockOf, providerFor, stateNow, type JournalRow } from './chain.js';
 import { browserOwner, startWizard, type Owner, type OwnerCoin, type WizardSession } from './owner.js';
-import { TOOLS, callTool, makePaywall, type FlowEvent } from './tools.js';
+import { BRIEF_GOAL, TOOLS, callTool, makePaywall, runAutopilot, type FlowEvent } from './tools.js';
 import {
   consumePendingAgentKey, descriptorOf, forget, fromShareHash, leashOf, loadAll, pendingAgentKey, saveOne, shareHash, type LeashDescriptor,
 } from './store.js';
@@ -39,7 +39,7 @@ const nodeText = (e: any) => String(e?.originalError ?? e?.message ?? e).split('
 
 // ---------- state ----------
 let net: NetConfig = NETWORKS[initialNetwork()];
-let provider: ElectrumNetworkProvider = providerFor(net);
+let provider: FailoverProvider = providerFor(net);
 let current: { desc: LeashDescriptor; leash: AgentLeash } | undefined;
 let owner: Owner | undefined;
 let wizard: WizardSession | undefined;
@@ -230,6 +230,15 @@ function renderAgent() {
   if (!payee) { fill(box, h('p', { class: 'muted' }, 'Demo tools are not configured on this network.')); return; }
   const onList = current.leash.params.allow.some((a) => binToHex(a) === binToHex(lockOf(payee)));
   fill(box,
+    h('div', { class: 'autopilot' },
+      h('div', {},
+        h('b', {}, 'Let the agent work on its own'),
+        h('small', { class: 'muted' }, `Goal: "${BRIEF_GOAL}" The agent plans, gets 402 for every tool, pays from the leash and reports. `,
+          'Scripted planner here (a public page holds no model key); ', h('code', {}, 'npm run agent'), ' runs the same loop with any OpenAI-compatible LLM.')),
+      h('div', { class: 'row gap wrap' },
+        h('button', { class: 'btn primary', id: 'autopilot-brief', onclick: () => autopilot(false) }, 'Run the agent (3 tools, ~5 200 sats)'),
+        h('button', { class: 'btn ghost', id: 'autopilot-full', onclick: () => autopilot(true) }, 'Run until the leash says no'))),
+    h('div', { class: 'eyebrow tools-or' }, 'or buy one tool by hand'),
     h('div', { class: 'tools' }, ...TOOLS.map((t) => h('button', { class: 'tool', onclick: () => runTool(t) },
       h('b', {}, t.title), h('span', { class: 'price' }, sats(t.price)), h('small', {}, t.description)))),
     !onList ? h('div', { class: 'callout warn' }, 'The demo tool payee is not on this leash\'s allow-list: the agent will refuse to pay it (that is the leash working).') : null);
@@ -250,6 +259,41 @@ async function runTool(tool: (typeof TOOLS)[number]) {
   await guard('Agent', async () => {
     const paywall = makePaywall(net, provider, net.demoToolPayee!);
     await callTool({ tool, leash, agentPrivateKey: key, net, paywall, maxPrice: 5_000n, on: add });
+    await refresh();
+  });
+}
+
+async function autopilot(untilRefused: boolean) {
+  if (!current) return;
+  const { leash, desc } = current;
+  const key = agentKeyOf(desc)!;
+  const log = $('flow');
+  log.replaceChildren();
+  const byWho: Record<string, string> = { sdk: 'refused before signing (agent SDK)', network: 'refused by the network', server: 'refused by the tool', agent: 'refused by the agent' };
+  const add = (e: AgentEvent) => {
+    let cls = 'request', text = e.text;
+    if (e.kind === 'plan') { cls = 'plan'; text = `plan #${e.step}: ${e.text}${e.budget ? ` · window ${sats(e.budget.spent)} of ${sats(e.budget.limit)} spent` : ''}`; }
+    if (e.kind === 'challenge') { cls = 'challenge'; text = `tool ← ${e.text.replace(/, nonce [0-9a-f]+$/, '')}`; }
+    if (e.kind === 'paid') cls = 'paid';
+    if (e.kind === 'refused') { cls = 'refused'; text = `${byWho[e.by ?? 'sdk']}: ${e.reason}`; }
+    if (e.kind === 'failed') cls = 'refused';
+    if (e.kind === 'finish') { cls = 'finish'; text = `agent's answer: ${e.text}`; }
+    if (e.kind === 'start') { cls = 'plan'; text = untilRefused ? 'goal: brief me on BCH, then keep watching the chain tip (until the leash says no)' : `goal: ${BRIEF_GOAL}`; }
+    log.append(h('div', { class: `flow-row ${cls}` }, h('span', { class: 'dot' }), h('div', {}, text,
+      e.kind === 'paid' && e.txid ? h('div', {}, 'payment tx ', txLink(e.txid)) : null,
+      e.kind === 'paid' && e.body ? h('pre', {}, e.body) : null)));
+    if (e.kind === 'paid') void refresh();
+  };
+  await guard('Agent', async () => {
+    const paywall = makePaywall(net, provider, net.demoToolPayee!);
+    const r = await runAutopilot({ leash, agentPrivateKey: key, net, paywall, untilRefused, on: add });
+    const paidN = r.calls.filter((c) => c.outcome === 'paid').length;
+    if (!paidN && r.calls.some((c) => c.by === 'sdk' && /^limit exceeded/.test(c.reason ?? ''))) {
+      log.append(h('div', { class: 'callout' }, desc.publicDemo
+        ? 'That refusal is the leash at work: other visitors have used this window of the public demo leash. It reopens after the blocks shown above. Meanwhile: "Try to break it" below, or create your own leash with free chipnet coins.'
+        : 'That refusal is the leash at work: this window is used up. It reopens after the blocks shown above.'));
+    }
+    toast(`Agent done: ${paidN} paid call(s)`, paidN ? 'ok' : 'info');
     await refresh();
   });
 }

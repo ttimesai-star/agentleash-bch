@@ -244,3 +244,12 @@ describe('LLM planner (OpenAI-compatible)', () => {
     expect(() => parseDecision('nothing', names)).toThrow(/no JSON object/);
   });
 });
+
+describe('LimitExceededError wording', () => {
+  it('counts the proven age already claimed; a payment larger than the whole window says so', async () => {
+    const { nextState } = await import('../src/index.js');
+    expect(() => nextState({ elapsed: 2n, spent: 9_000n }, 3n, 5_000n, 6n, 12_000n)).toThrow('3000 left; window resets after ~1 more blocks of state-UTXO age');
+    expect(() => nextState({ elapsed: 2n, spent: 9_000n }, 0n, 5_000n, 6n, 12_000n)).toThrow('window resets after ~4 more blocks');
+    expect(() => nextState({ elapsed: 5n, spent: 9_000n }, 1n, 13_000n, 6n, 12_000n)).toThrow('limit exceeded: 13000 requested (payment + fee) is more than the whole window limit of 12000 sats');
+  });
+});

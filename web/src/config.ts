@@ -1,7 +1,7 @@
 // Network flag. chipnet is the default and the only network the public demo opens without a build flag.
 // Mainnet is wired the same way but stays locked unless the site is built with VITE_ALLOW_MAINNET=1
 // (prototype, unaudited: see README "Mainnet run"). Every mainnet operation is capped below.
-import type { BchNetwork } from '../../src/browser.js';
+import { ELECTRUM_HOSTS, type BchNetwork } from '../../src/browser.js';
 
 export type NetName = 'chipnet' | 'mainnet';
 
@@ -14,7 +14,8 @@ export interface NetConfig {
   x402: BchNetwork;
   /** CashScript network name and Electrum (WebSocket) host. */
   cashscript: 'chipnet' | 'mainnet';
-  electrum: string;
+  /** Electrum (WebSocket) hosts in order of preference; the next one is used when one fails. */
+  electrum: string[];
   explorerTx: (txid: string) => string;
   explorerAddr: (addr: string) => string;
   /** Where test coins come from (chipnet only). */
@@ -39,7 +40,7 @@ export const NETWORKS: Record<NetName, NetConfig> = {
     prefix: 'bchtest',
     x402: 'bch:bchtest',
     cashscript: 'chipnet',
-    electrum: 'chipnet.bch.ninja',
+    electrum: ELECTRUM_HOSTS.chipnet,
     explorerTx: (t) => `https://chipnet.chaingraph.cash/tx/${t}`,
     explorerAddr: (a) => `https://chipnet.chaingraph.cash/address/${a}`,
     faucet: 'https://tbch.googol.cash/',
@@ -56,7 +57,7 @@ export const NETWORKS: Record<NetName, NetConfig> = {
     prefix: 'bitcoincash',
     x402: 'bch:bitcoincash',
     cashscript: 'mainnet',
-    electrum: 'bch.imaginary.cash',
+    electrum: ELECTRUM_HOSTS.mainnet,
     explorerTx: (t) => `https://blockchair.com/bitcoin-cash/transaction/${t}`,
     explorerAddr: (a) => `https://blockchair.com/bitcoin-cash/address/${a}`,
     // about 1 USD at ~500 USD/BCH: prototype, unaudited

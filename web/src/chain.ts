@@ -1,15 +1,16 @@
 // Chain access for the web demo: Electrum over WebSocket (CashScript's provider), proven UTXO age,
 // and the leash journal reconstructed from the contract's transaction history.
 import { binToHex, cashAddressToLockingBytecode, decodeTransaction, encodeCashAddress, hexToBin, lockingBytecodeToCashAddress, sha256 } from '@bitauth/libauth';
-import { ElectrumNetworkProvider, type SpendableUtxo } from 'cashscript';
-import { AgentLeash, decodeState, parseReceipt, type LeashState } from '../../src/browser.js';
+import type { SpendableUtxo } from 'cashscript';
+import { AgentLeash, FailoverProvider, decodeState, parseReceipt, type ElectrumLike, type LeashState } from '../../src/browser.js';
 import type { NetConfig } from './config.js';
 
-const providers = new Map<string, ElectrumNetworkProvider>();
-export function providerFor(net: NetConfig): ElectrumNetworkProvider {
+const providers = new Map<string, FailoverProvider>();
+/** One provider per network; a dead or hanging Electrum server fails over to the next in net.electrum. */
+export function providerFor(net: NetConfig): FailoverProvider {
   let p = providers.get(net.name);
   if (!p) {
-    p = new ElectrumNetworkProvider(net.cashscript as any, { hostname: net.electrum } as any);
+    p = new FailoverProvider(net.cashscript as any, net.electrum, { onSwitch: (from, to) => console.info(`[electrum] ${from} -> ${to}`) });
     providers.set(net.name, p);
   }
   return p;
@@ -34,7 +35,7 @@ export function p2pkhAddress(pkh: Uint8Array, net: NetConfig, tokens = false): s
 }
 
 /** Blocks of age BIP68 will see for this UTXO in the next block; 0 if unconfirmed. Capped at 65535. */
-export async function ageOf(provider: ElectrumNetworkProvider, u: SpendableUtxo): Promise<bigint> {
+export async function ageOf(provider: ElectrumLike, u: SpendableUtxo): Promise<bigint> {
   const tip = await provider.getBlockHeight();
   const list = await provider.performRequest('blockchain.scripthash.listunspent', scripthashOf(hexToBin(u.lockingBytecode))) as any[];
   const row = list.find((x) => x.tx_hash === u.txid && x.tx_pos === u.vout);
@@ -57,7 +58,7 @@ export interface JournalRow {
 }
 
 const txCache = new Map<string, ReturnType<typeof decodeTransaction>>();
-async function getTx(provider: ElectrumNetworkProvider, txid: string) {
+async function getTx(provider: ElectrumLike, txid: string) {
   let tx = txCache.get(txid);
   if (!tx) {
     const hex = await provider.performRequest('blockchain.transaction.get', txid, false) as string;
@@ -70,7 +71,7 @@ async function getTx(provider: ElectrumNetworkProvider, txid: string) {
 
 /** Every transaction that touched the leash address, oldest first, classified. */
 export async function journal(leash: AgentLeash, net: NetConfig, limit = 40): Promise<JournalRow[]> {
-  const provider = leash.provider as ElectrumNetworkProvider;
+  const provider = leash.provider as ElectrumLike;
   const lock = lockOf(leash.tokenAddress);
   const lockHex = binToHex(lock);
   const hist = await provider.performRequest('blockchain.scripthash.get_history', scripthashOf(lock)) as { tx_hash: string; height: number }[];
@@ -125,7 +126,7 @@ export async function journal(leash: AgentLeash, net: NetConfig, limit = 40): Pr
 }
 
 export async function stateNow(leash: AgentLeash): Promise<{ utxo?: SpendableUtxo; state?: LeashState; age: bigint; tip: number; stray: number }> {
-  const provider = leash.provider as ElectrumNetworkProvider;
+  const provider = leash.provider as ElectrumLike;
   const [{ state, stray }, tip] = await Promise.all([leash.getUtxos(), provider.getBlockHeight()]);
   if (!state) return { age: 0n, tip, stray: stray.length };
   return { utxo: state, state: AgentLeash.stateOf(state), age: await ageOf(provider, state), tip, stray: stray.length };
