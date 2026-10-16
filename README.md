@@ -245,8 +245,8 @@ An agent that actually lives on the leash: `src/agent.ts` (loop, planners, journ
 - **Planner.** Default: a scripted planner (no model, deterministic; asks past the budget on purpose so the leash has to
   say no). With `AGENT_LLM_BASE_URL`, `AGENT_LLM_API_KEY`, `AGENT_LLM_MODEL` set, an LLM over any OpenAI-compatible
   chat API chooses instead. The model only picks a tool or finishes; it never sees a key and cannot choose a payee or an
-  amount; tool answers are passed to it as untrusted data. Checked on 16.10.2026 on the mock network with
-  `openai/gpt-oss-20b` on NVIDIA NIM (it bought the 3 tools and finished with a brief); free tiers of other providers
+  amount; tool answers are passed to it as untrusted data. Checked on 16.10.2026 with
+  `openai/gpt-oss-20b` on NVIDIA NIM, on the mock network and on chipnet (below); free tiers of other providers
   answered 403/402/429 that day, which the planner reports as an error.
 - **Networks.** `mock` (default): CashScript's MockNetworkProvider, which executes the covenant in the BCH VM for every
   broadcast; no coins, works offline. `--net chipnet`: the public demo leash of the web page (agent key published in
@@ -265,6 +265,14 @@ Chipnet run, 16.10.2026 (`npm run agent:chipnet`, scripted planner, public demo 
 | compromised: pay a non-allow-listed address | rejected by the node | `mandatory-script-verify-flag-failed (Script failed an OP_VERIFY operation) (code 16)`; rule `pay: recipient not allow-listed` |
 | compromised: 1 sat over the limit | rejected by the node | same; rule `pay: limit exceeded` |
 | compromised: fast-forward the clock | rejected by consensus | `non-BIP68-final (code 64)` |
+
+Chipnet run with the **LLM planner**, 16.10.2026 22:39 Minsk (`openai/gpt-oss-20b` on NVIDIA NIM, same leash, the window
+already had 5 215 sats spent by the web autopilot run): the model chose chain_tip, bch_price, fortune (paid:
+`3a70902aefa458be69dbf6eaaefa5d059ce8980b248dcbc3ed51fd90335d5ac4`, `bb41008a3f04f8bb4cf18e7fba214cb23e516c854d73206258854c5941159a32`,
+`f3400225a171288c3039c2d5797e211db062782f9f7d37613d7bfcfc7071450c`), then chain_tip again to keep watching, which the SDK
+refused before signing (`limit exceeded: 10430 of 12000 sats spent in this window, 1705 requested (payment + fee), 1570 left`);
+the model then finished with the brief (block 328170, 273.50 USD, a fortune). The compromised phase was refused by the node
+as above. Journal: `scripts/agent-chipnet-log.jsonl` (the key is not logged).
 
 Found while building it: on a fresh window (state 0, 0) the "fake reset" attack is the honest next state, so the
 network rightly accepts it and the demo would have shown a false breach. `buildAttack('fakereset')` now refuses to
