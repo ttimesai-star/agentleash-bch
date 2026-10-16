@@ -9,6 +9,8 @@
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
     "chipnet": "tsx scripts/chipnet.ts",
+    "agent": "tsx scripts/agent.ts",
+    "agent:chipnet": "tsx scripts/agent.ts --net chipnet",
     "web:dev": "vite web",
     "web:build": "tsc -p web/tsconfig.json && vite build web",
     "web:typecheck": "tsc -p web/tsconfig.json"

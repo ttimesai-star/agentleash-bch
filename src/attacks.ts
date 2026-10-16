@@ -75,7 +75,12 @@ export function buildAttack(kind: AttackKind, a: AttackArgs): Attack {
   }
   let claimed: LeashState = { elapsed: st.elapsed + elapsedAdd, spent: st.spent + amount + fee };
   if (claimed.elapsed >= p.period) claimed = { elapsed: 0n, spent: amount + fee };
-  if (kind === 'fakereset') claimed = { elapsed: 0n, spent: amount + fee };
+  if (kind === 'fakereset') {
+    // On a fresh window (0, 0) the "fake reset" (0, amount + fee) IS the honest next state: the network would
+    // rightly accept it, and a demo would wrongly report a breach. Only an attack once something was spent.
+    if (st.elapsed === 0n && st.spent === 0n) throw new Error('fake-reset attack needs a window with spending in it (pay once, then try)');
+    claimed = { elapsed: 0n, spent: amount + fee };
+  }
   const change = stateUtxo.satoshis - amount - fee;
   if (change < MIN_STATE_VALUE) throw new Error(`leash balance too low for this attack (needs ${amount + fee + MIN_STATE_VALUE} sats), top up first`);
 

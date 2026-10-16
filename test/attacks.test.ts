@@ -40,6 +40,17 @@ describe('try-to-break-it attacks', () => {
     expect(() => buildAttack('clock', { leash: ctx.leash, stateUtxo: state, agentPrivateKey: ctx.agent.priv, realAge: PERIOD })).toThrow(/younger than one period/);
   });
 
+  it('fakereset on a fresh window is not built: (0, amount + fee) would be the honest state and be accepted', async () => {
+    const ctx = setup();
+    const fresh = ctx.addState(100_000n, { elapsed: 0n, spent: 0n });
+    expect(() => buildAttack('fakereset', { leash: ctx.leash, stateUtxo: fresh, agentPrivateKey: ctx.agent.priv, realAge: 0n })).toThrow(/pay once, then try/);
+    // one sat of spending (or one counted block) makes it a real attack again
+    for (const st of [{ elapsed: 0n, spent: 1n }, { elapsed: 1n, spent: 0n }]) {
+      const a = buildAttack('fakereset', { leash: ctx.leash, stateUtxo: ctx.addState(100_000n, st), agentPrivateKey: ctx.agent.priv, realAge: 0n });
+      expect(a.builder).toFailRequireWith('pay: wrong new state');
+    }
+  });
+
   it('refuses to build when the balance cannot cover the attack (no misleading rejection reason)', () => {
     const ctx = setup();
     const state = ctx.addState(1_500n);
