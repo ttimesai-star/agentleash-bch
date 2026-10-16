@@ -16,6 +16,9 @@ import { mkKey, type Key } from './helpers.js';
 type Hook = (hex: string, n: number) => 'ok' | 'lose-response' | 'reject';
 class HookedProvider extends MockNetworkProvider {
   sent: string[] = [];
+  /** Addresses a lagging server does not show coins for. */
+  hidden = new Set<string>();
+  async getUtxos(address: string) { return this.hidden.has(address) ? [] : super.getUtxos(address); }
   hook: Hook = () => 'ok';
   onSend?: (n: number) => void;
   async sendRawTransaction(hex: string): Promise<string> {
@@ -143,6 +146,46 @@ describe('net-run: recovery from the saved state', () => {
     provider.hook = () => 'ok';
     expect(await executeWithdraw(ctx)).toBe(EXIT.ok);
     expect(await provider.getUtxos(st.leash)).toHaveLength(0);
+  });
+
+  // Jules review 17.10: an empty leash closes the run only on positive evidence
+  it('withdraw broadcast but its response lost: exit 1, then a later withdraw recognises its own sweep and closes', async () => {
+    const { ctx, provider, owner } = mkCtx();
+    provider.addUtxo(owner.address, { ...randomUtxo({ satoshis: 100_000n }), vout: 0 });
+    provider.hook = (_h, n) => (n === 3 ? 'lose-response' : 'ok'); // genesis, pay, attack, withdraw
+    expect(await executeRun(ctx)).toBe(EXIT.fundsMayRemain);
+    const st = loadState(ctx.statePath);
+    expect(st.closed).toBe(false);
+    expect(st.withdrawAttempts).toHaveLength(1);
+    expect(await provider.getUtxos(st.leash)).toHaveLength(0); // the sweep did go out
+    expect(await executeWithdraw(ctx)).toBe(EXIT.ok);
+    expect(loadState(ctx.statePath)).toMatchObject({ closed: true, closeReason: expect.stringMatching(/already swept/), withdrawTxid: st.withdrawAttempts[0] });
+    expect(provider.sent).toHaveLength(4); // nothing new was sent
+  });
+
+  it('genesis on the network but a lagging server shows an empty leash: exit 1, run stays open, funds recovered later', async () => {
+    const { ctx, provider, owner, logs } = mkCtx();
+    provider.addUtxo(owner.address, { ...randomUtxo({ satoshis: 100_000n }), vout: 0 });
+    const plan = await planRun(ctx);
+    saveStateAtomic(ctx.statePath, plan.state);
+    await provider.sendRawTransaction(plan.genesis.build()); // process gone before the state was updated
+    provider.hidden.add(plan.leash.address).add(plan.leash.tokenAddress);
+    expect(await executeWithdraw(ctx)).toBe(EXIT.fundsMayRemain);
+    expect(loadState(ctx.statePath).closed).toBe(false);
+    expect(String(logs.at(-1)?.error)).toMatch(/lagging server/);
+    provider.hidden.clear();
+    expect(await executeWithdraw(ctx)).toBe(EXIT.ok);
+    expect(loadState(ctx.statePath)).toMatchObject({ closed: true, closeReason: 'withdrawn' });
+    expect(await provider.getUtxos(plan.state.leash)).toHaveLength(0);
+  });
+
+  it('node accepted the genesis earlier but the server does not know it now: exit 1, not closed', async () => {
+    const { ctx, provider, owner } = mkCtx();
+    provider.addUtxo(owner.address, { ...randomUtxo({ satoshis: 100_000n }), vout: 0 });
+    const plan = await planRun(ctx);
+    saveStateAtomic(ctx.statePath, { ...plan.state, phase: 'genesis-sent', genesisTxid: plan.state.plannedGenesisTxid });
+    expect(await executeWithdraw(ctx)).toBe(EXIT.fundsMayRemain);
+    expect(loadState(ctx.statePath).closed).toBe(false);
   });
 
   it('withdraw refuses a state of another owner and a tampered leash address', async () => {

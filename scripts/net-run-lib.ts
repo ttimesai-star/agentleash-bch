@@ -4,6 +4,8 @@
 //       BEFORE the first broadcast, so the leash address can always be rebuilt;
 //   (b) `withdraw` reconciles an open run from that state: sweeps the leash back to the owner, or closes the
 //       run when the genesis never reached the network; non-zero exit when funds may still be on the leash;
+//       an empty leash closes the run only on evidence (genesis unknown and never accepted, or one of this
+//       run's withdraw txids, recorded before sending, known to the network) - Jules review 17.10;
 //   (c) the owner address is derived from the key and compared with the secrets file;
 //   (d) a mainnet secrets file must say network=mainnet and must not reuse any known chipnet/demo key;
 //   (e) the loss ceiling (fund + all fees) is checked BEFORE anything is sent;
@@ -154,6 +156,8 @@ export interface RunState {
   selfSendTxid?: string;
   genesisTxid?: string;
   withdrawTxid?: string;
+  /** Planned txid of every owner withdraw, written BEFORE it is sent: positive evidence for "already swept". */
+  withdrawAttempts?: string[];
 }
 
 /** Write via a temp file in the same directory + fsync + rename: the file is either the old or the new state. */
@@ -401,10 +405,26 @@ async function withdrawInner(ctx: Ctx, stateArg?: RunState): Promise<number> {
     ctx.log({ label: ctx.broadcast ? 'run closed' : 'run would be closed (dry run)', reason, withdrawTxid });
   };
   if (!utxos.length) {
+    // Jules review 17.10: an empty leash is closed only on positive evidence. Agent payments always keep a
+    // state coin on the leash, so with the genesis on the network only an owner withdraw empties it; a
+    // lagging server shows an empty leash too, and closing then would forget the funds.
     const known = await txKnown(ctx, state.plannedGenesisTxid);
     if (known === undefined) { ctx.log({ label: 'withdraw', error: 'leash empty but the genesis status is unknown (server error); retry later' }); return EXIT.fundsMayRemain; }
-    close(known ? 'leash empty: already swept' : 'genesis never reached the network: nothing on the leash');
-    return EXIT.ok;
+    if (!known) {
+      if (state.genesisTxid) {
+        ctx.log({ label: 'withdraw', error: `the node accepted the genesis ${state.genesisTxid} earlier but the server does not know it now; not closing, check ${state.leash} in an explorer and retry` });
+        return EXIT.fundsMayRemain;
+      }
+      close('genesis never reached the network: nothing on the leash');
+      return EXIT.ok;
+    }
+    for (const t of state.withdrawAttempts ?? []) {
+      const k = await txKnown(ctx, t);
+      if (k === undefined) { ctx.log({ label: 'withdraw', error: `leash empty but the status of withdraw ${t} is unknown (server error); retry later` }); return EXIT.fundsMayRemain; }
+      if (k) { close('leash empty: already swept by an earlier withdraw', t); return EXIT.ok; }
+    }
+    ctx.log({ label: 'withdraw', error: `leash empty while the genesis is on the network and none of this run's withdraw transactions is known: lagging server or swept by another tool; not closing, check ${state.leash} in an explorer and retry` });
+    return EXIT.fundsMayRemain;
   }
   const own = (await ctx.provider.getUtxos(ctx.keys.owner.address)).filter((u) => !u.token).sort((a, b) => (b.satoshis > a.satoshis ? 1 : -1))[0];
   if (!own) { ctx.log({ label: 'withdraw', error: 'owner has no plain coin for the owner path; send any coin to the owner address and retry' }); return EXIT.fundsMayRemain; }
@@ -421,6 +441,11 @@ async function withdrawInner(ctx: Ctx, stateArg?: RunState): Promise<number> {
   const ownerLockHex = binToHex(p2pkhLock(ownerPkh));
   if (tb.outputs.some((o) => binToHex(typeof o.to === 'string' ? lockingBytecodeOf(o.to) : o.to) !== ownerLockHex)) {
     ctx.log({ label: 'withdraw', error: 'withdraw output not to the owner' }); return EXIT.fundsMayRemain;
+  }
+  if (ctx.broadcast) {
+    // recorded before sending: if the response is lost, a later withdraw recognises the sweep by this txid
+    state.withdrawAttempts = [...(state.withdrawAttempts ?? []), plannedTxid(tb)];
+    saveStateAtomic(ctx.statePath, state);
   }
   const r = await send(ctx, 'owner withdraws everything', tb, { leash: state.leash, swept: utxos.reduce((s, u) => s + u.satoshis, 0n) });
   if (!ctx.broadcast) return EXIT.ok;
