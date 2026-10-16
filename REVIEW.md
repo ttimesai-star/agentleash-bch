@@ -247,3 +247,19 @@ This review evaluates `src/agent.ts`, `src/failover.ts`, `src/attacks.ts`, `src/
 | AL3-05 | **Accepted.** Failed calls count towards the stop rule like refusals; the finish text says "refused or failed calls". |
 
 Tests: 187 (183 + 4 from this round).
+
+## Review stage 4 (net-run hardening), 2026-10-17
+
+Jules session 14765616950157296667 on `review/agentleash-netrun-hardening` (base d5fcabe). Jules returned a patch in the session output (no branch, no PR). Plan: (1) save `phase='genesis-sent'` before sending the genesis and close an empty-leash run only when the genesis was never sent; (2) `payee.network` check in `loadKeys`, `stateCategory` = 64 hex in `validateParams`; (3) redact private keys in logs; (4) tests.
+
+### Maintainer response, stage 4
+
+| Item | Outcome |
+|---|---|
+| 1a. `phase='genesis-sent'` saved before the genesis send | **Rejected.** Not in the delivered patch either. With this flag and rule 1b, a genesis the node explicitly refused would leave the run open for ever (exit 1 on every `withdraw`), and `rotateState` would block every later run. Whether the genesis reached the network is decided by `getRawTransaction(plannedGenesisTxid)`, which is stronger evidence than a flag written before sending. |
+| 1b. Empty leash: close only if the genesis was never sent, otherwise exit 1 | **Finding accepted, fix rewritten.** The finding is right: the old code closed "leash empty: already swept" with exit 0 whenever the genesis was known, so a lagging server could close a run that still held the fund. The patch, however, never closes once the genesis was sent: if the response to our own withdraw is lost, every later `withdraw` returns 1 and the run can only be closed by editing the state file. Fix: the planned txid of each withdraw is written to the state (`withdrawAttempts`) **before** it is sent; an empty leash closes the run only on evidence: the genesis is unknown and the node never accepted it (`genesisTxid` absent), or one of this run's withdraw txids is known to the network. Otherwise exit 1 with "lagging server or swept by another tool". 3 tests (lost withdraw response, lagging server, accepted genesis that vanished); all three fail on the previous code. |
+| 2a. `payee.network` in the mainnet file | **Accepted** (defence in depth; the payee address prefix was already checked). Test. |
+| 2b. `stateCategory` = 64 hex | **Accepted, tightened** to lowercase only: `getUtxos` compares the category with the server's lowercase string verbatim, so an uppercase category passed by `/i` would make the state coin invisible. Test with 6 bad values. |
+| 3. Redact private keys in logs | **Accepted, extended.** The patch redacted only the owner key as a whole value. `logReplacer` also redacts this run's agent key (added to `ctx.secrets` when the run is planned or its state loaded) and cuts known keys out of longer strings (error messages). Other 64-hex values are left alone on purpose: txids and NFT categories have the same shape and must stay visible in the log. Test of a full run through the real log path: no owner or agent key in any line, self-send/genesis/withdraw txids present. |
+
+Tests: 216 (208 + 8 from this round). No private key was ever written to a log before this round (security review 16.10, section 3); item 3 is a guard against future log lines.
