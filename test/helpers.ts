@@ -1,6 +1,6 @@
 import { binToHex, encodeCashAddress, generatePrivateKey, secp256k1, hash160 } from '@bitauth/libauth';
-import { MockNetworkProvider, SignatureTemplate, TransactionBuilder, randomUtxo, type Output, type SpendableUtxo } from 'cashscript';
-import { AgentLeash, encodeState, p2pkhLock, receiptLockingBytecode, type LeashParams, type LeashState } from '../src/index.js';
+import { Contract, MockNetworkProvider, SignatureTemplate, TransactionBuilder, randomUtxo, type Output, type SpendableUtxo } from 'cashscript';
+import { AgentLeash, AgentLeashArtifact, categoryToVmBytes, encodeState, p2pkhLock, receiptLockingBytecode, type LeashParams, type LeashState } from '../src/index.js';
 
 export interface Key { priv: Uint8Array; pub: Uint8Array; pkh: Uint8Array; address: string; tokenAddress: string; lock: Uint8Array; sig: SignatureTemplate }
 
@@ -22,7 +22,18 @@ export const LIMIT = 10_000n;
 export const PERIOD = 10n;
 export const MAX_FEE = 2_000n;
 
-export function setup(over: Partial<LeashParams> = {}) {
+/**
+ * Contract-level tests only: an AgentLeash whose params skip validateParams (e.g. a 1-byte allow entry),
+ * to show what the contract itself enforces when the SDK guard is bypassed by a hand-made deployment.
+ */
+export function uncheckedLeash(params: LeashParams, provider: MockNetworkProvider): AgentLeash {
+  const [a, b = params.allow[0], c = params.allow[0]] = params.allow;
+  const contract = new Contract(AgentLeashArtifact, [categoryToVmBytes(params.stateCategory), params.agentPkh, params.ownerLock,
+    a, b, c, params.limit, params.period, params.maxFee], { provider, contractType: 'p2sh32' });
+  return Object.assign(Object.create(AgentLeash.prototype), { params, provider, contract }) as AgentLeash;
+}
+
+export function setup(over: Partial<LeashParams> = {}, opts: { unchecked?: boolean } = {}) {
   const provider = new MockNetworkProvider();
   const owner = mkKey(), agent = mkKey(), server = mkKey(), server2 = mkKey(), attacker = mkKey();
   const params: LeashParams = {
@@ -35,7 +46,7 @@ export function setup(over: Partial<LeashParams> = {}) {
     maxFee: MAX_FEE,
     ...over,
   };
-  const leash = new AgentLeash(params, provider);
+  const leash = opts.unchecked ? uncheckedLeash(params, provider) : new AgentLeash(params, provider);
   const addState = (satoshis = 100_000n, state: LeashState = { elapsed: 0n, spent: 0n }, token?: SpendableUtxo['token']): SpendableUtxo =>
     provider.addUtxo(leash.tokenAddress, {
       ...randomUtxo({ satoshis }),

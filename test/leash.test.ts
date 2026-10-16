@@ -132,10 +132,10 @@ describe('pay: attacks (each must fail in the contract)', () => {
     expect(rawPay(ctx, { input: u, outputs: [o.s, o.p, o.r] })).toFailRequireWith('pay: limit exceeded');
   });
   it('dust payment (below 546 even where relay dust is lower)', () => {
-    // a 1-byte recipient script has a relay dust threshold of ~474 sats, so the SDK lets 500 through;
-    // the contract still enforces 546
+    // a 1-byte recipient script has a relay dust threshold of ~474 sats; the contract still enforces 546.
+    // The SDK refuses such an allow entry since 16.10 (validateParams), so the leash is deployed unchecked here.
     const short = Uint8Array.of(0x51);
-    const ctx = setup({ allow: [short] }); const u = ctx.addState(); const o = base(ctx, u, 500n);
+    const ctx = setup({ allow: [short] }, { unchecked: true }); const u = ctx.addState(); const o = base(ctx, u, 500n);
     expect(rawPay(ctx, { input: u, outputs: [o.s, { to: short, amount: 500n }, o.r] })).toFailRequireWith('pay: payment below dust');
   });
   it('drain via miner fee', () => {
@@ -386,5 +386,23 @@ describe('SDK guards', () => {
     expect(() => setup({ allow: [new Uint8Array()] })).toThrow(/anyone-can-spend/);
     const k = mkKey();
     expect(() => setup({ allow: [k.lock, k.lock, k.lock, k.lock] })).toThrow(/allow-list/);
+  });
+  it('security review 16.10: refuses trivial allow entries, non-P2PKH owner lock, agent == owner', () => {
+    for (const bad of [Uint8Array.of(0x51), Uint8Array.of(0x00), Uint8Array.of(0x6a), Uint8Array.of(0x51, 0x51, 0x87),
+      Uint8Array.from([0x6a, 0x04, 1, 2, 3, 4]), Uint8Array.from([0x76, 0xa9, 0x14, ...new Uint8Array(20), 0x88, 0x51])]) {
+      expect(() => setup({ allow: [bad] }), binToHex(bad)).toThrow(/not a standard P2PKH\/P2SH/);
+    }
+    const k = mkKey();
+    expect(() => setup({ allow: [k.lock, Uint8Array.of(0x51)] })).toThrow(/not a standard/);
+    // P2SH20 and P2SH32 recipients are fine
+    expect(() => setup({ allow: [Uint8Array.from([0xa9, 0x14, ...new Uint8Array(20).fill(7), 0x87])] })).not.toThrow();
+    expect(() => setup({ allow: [Uint8Array.from([0xaa, 0x20, ...new Uint8Array(32).fill(7), 0x87])] })).not.toThrow();
+    // owner lock: 25 bytes but not P2PKH (OP_TRUE padding) is refused
+    const fake = new Uint8Array(25).fill(0x51);
+    expect(() => setup({ ownerLock: fake })).toThrow(/ownerLock must be a standard/);
+    expect(() => setup({ ownerLock: Uint8Array.from([0xa9, 0x14, ...new Uint8Array(20), 0x87]) })).toThrow(/ownerLock/);
+    // agent key == owner key
+    const same = mkKey();
+    expect(() => setup({ agentPkh: same.pkh, ownerLock: same.lock })).toThrow(/agent key must differ/);
   });
 });

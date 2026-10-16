@@ -94,11 +94,31 @@ export function pkhOfPrivateKey(priv: Uint8Array): Uint8Array {
   return hash160(pub);
 }
 
+/** Standard P2PKH locking bytecode: OP_DUP OP_HASH160 PUSH20 <pkh> OP_EQUALVERIFY OP_CHECKSIG. */
+export const isP2pkhLock = (b: Uint8Array): boolean =>
+  b.length === 25 && b[0] === 0x76 && b[1] === 0xa9 && b[2] === 0x14 && b[23] === 0x88 && b[24] === 0xac;
+/** P2SH20: OP_HASH160 PUSH20 <hash> OP_EQUAL. */
+export const isP2sh20Lock = (b: Uint8Array): boolean => b.length === 23 && b[0] === 0xa9 && b[1] === 0x14 && b[22] === 0x87;
+/** P2SH32: OP_HASH256 PUSH32 <hash> OP_EQUAL. */
+export const isP2sh32Lock = (b: Uint8Array): boolean => b.length === 35 && b[0] === 0xaa && b[1] === 0x20 && b[34] === 0x87;
+
 export function validateParams(p: LeashParams): void {
   if (p.allow.length < 1 || p.allow.length > 3) throw new Error('allow-list must have 1..3 entries');
   if (p.allow.some((a) => a.length === 0)) throw new Error('empty allow-list entry would be anyone-can-spend');
+  // Security review 16.10: only address templates (P2PKH / P2SH20 / P2SH32). Anything else is either
+  // spendable by anyone (OP_1 = 0x51, OP_TRUE scripts, empty) or unspendable (OP_RETURN): a payment
+  // there is a loss, and the agent could recover an anyone-can-spend output itself.
+  for (const a of p.allow) {
+    if (!isP2pkhLock(a) && !isP2sh20Lock(a) && !isP2sh32Lock(a)) {
+      throw new Error(`allow-list entry ${binToHex(a)} is not a standard P2PKH/P2SH address script (anyone-can-spend or burn)`);
+    }
+  }
   if (p.agentPkh.length !== 20) throw new Error('agentPkh must be 20 bytes');
-  if (p.ownerLock.length !== 25) throw new Error('ownerLock must be a 25-byte P2PKH locking bytecode');
+  if (!isP2pkhLock(p.ownerLock)) throw new Error('ownerLock must be a standard 25-byte P2PKH locking bytecode');
+  if (binToHex(p.ownerLock.slice(3, 23)) === binToHex(p.agentPkh)) {
+    // the agent key would also be the owner key: the owner path (withdraw everything) bypasses the limit
+    throw new Error('agent key must differ from the owner key');
+  }
   if (p.limit < DUST) throw new Error('limit below dust');
   if (p.period < 1n || p.period > 65535n) throw new Error('period must be 1..65535 blocks');
   if (p.maxFee < 0n) throw new Error('maxFee must be >= 0');
