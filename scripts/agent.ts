@@ -30,8 +30,13 @@ import {
 } from '../src/index.js';
 
 const args = process.argv.slice(2);
-const flag = (n: string) => args.includes(n);
-const opt = (n: string) => { const i = args.indexOf(n); return i >= 0 ? args[i + 1] : undefined; };
+const flag = (n: string) => args.includes(n) || args.some((a) => a.startsWith(`${n}=`));
+const opt = (n: string) => {
+  const eq = args.find((a) => a.startsWith(`${n}=`));
+  if (eq) return eq.slice(n.length + 1); // keeps any '=' inside the value (e.g. a goal)
+  const i = args.indexOf(n);
+  return i >= 0 ? args[i + 1] : undefined;
+};
 const NET = opt('--net') ?? 'mock';
 if (NET === 'mainnet') {
   console.error('refusing: this demo agent does not run on mainnet. The capped mainnet run is scripts/net-run.ts and needs the owner\'s approval.');

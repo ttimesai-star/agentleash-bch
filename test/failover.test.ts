@@ -75,11 +75,43 @@ describe('FailoverProvider', () => {
   });
 
   it('isConnectionError: connection problems yes, node refusals no', () => {
-    for (const m of ['Failed to establish connection: WebSocket: 1006: .', 'connect ECONNREFUSED 1.2.3.4:50004', 'Request timed out', 'socket hang up']) expect(isConnectionError(new Error(m))).toBe(true);
+    for (const m of [
+      'Failed to establish connection: WebSocket: 1006: .', 'connect ECONNREFUSED 1.2.3.4:50004', 'Request timed out', 'socket hang up',
+      'Failed to fetch', 'fetch failed', 'ENETUNREACH', 'EPIPE',
+    ]) expect(isConnectionError(new Error(m))).toBe(true);
+    // nested error objects
+    expect(isConnectionError({ originalError: new Error('WebSocket connection closed') })).toBe(true);
+    expect(isConnectionError({ cause: new Error('ENETUNREACH') })).toBe(true);
     for (const m of ['non-BIP68-final', 'mandatory-script-verify-flag-failed (Script failed an OP_VERIFY operation)', 'txn-already-known', 'No such mempool or blockchain transaction']) expect(isConnectionError(new Error(m))).toBe(false);
+  });
+
+  it('withTimeout does not leak unhandled rejections if promise rejects after timeout', async () => {
+    let rejectLate!: (err: Error) => void;
+    const hangingPromise = new Promise((_, reject) => { rejectLate = reject; });
+    const p = new FailoverProvider('chipnet' as any, ['a'], { timeoutMs: 10 }, () => ({
+      network: 'chipnet' as any,
+      getUtxos: () => hangingPromise as any,
+      getUtxosForLockingBytecode: () => hangingPromise as any,
+      getBlockHeight: () => hangingPromise as any,
+      getRawTransaction: () => hangingPromise as any,
+      sendRawTransaction: () => hangingPromise as any,
+      performRequest: () => hangingPromise as any,
+    }));
+    await expect(p.getBlockHeight()).rejects.toThrow(/timed out/);
+    // now late reject the promise after timeout has passed
+    rejectLate(new Error('late connection reset'));
+    await new Promise((res) => setTimeout(res, 20));
   });
 
   it('needs at least one host', () => {
     expect(() => new FailoverProvider('chipnet' as any, [])).toThrow(/at least one host/);
+  });
+});
+
+describe('isConnectionError on wrapped errors', () => {
+  it('a wrapped node refusal is not a connection error; a wrapped connection error is', () => {
+    expect(isConnectionError({ message: 'broadcast failed', originalError: new Error('non-BIP68-final (code 64)') })).toBe(false);
+    expect(isConnectionError({ message: 'broadcast failed', originalError: { cause: new Error('connect ECONNREFUSED 1.2.3.4') } })).toBe(true);
+    expect(isConnectionError(null)).toBe(false);
   });
 });

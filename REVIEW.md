@@ -179,3 +179,71 @@ changed and why. Sessions are on jules.google.com/session/<id>.
 | 12902502665375009200 | hardening `7781d93..db4164b` | `177831c`: txid, 429 when every nonce is in flight, poll retry accepted; "already known" broadcast and handler failure rewritten (the patch's substring match on "duplicate" also matched `bad-txns-inputs-duplicate` and would have served content for an invalid tx) |
 | 3258987019283182858 | round-2 rework `cd7e729..177831c` | `e46d5d8`: retry during an in-flight broadcast gets 202, abortable confirmation wait |
 | 3569125901430821836 | chipnet `minConfirmations` run | `4dce950`: Electrum errors count as 0 confirmations, Headers/tuple request headers kept, stricter testnet key guard |
+
+---
+
+## Review stage 3 (agent, failover), 2026-10-16
+
+This review evaluates `src/agent.ts`, `src/failover.ts`, `src/attacks.ts`, `src/state.ts`, `src/demo-tools.ts`, `scripts/agent.ts`, and `web/src/tools.ts` + `web/src/main.ts` autopilot.
+
+### Findings Summary (Stage 3)
+
+1. **AL3-01: `isConnectionError` False Negative on Browser `Failed to fetch` & Nested Error Objects**
+   - **Severity**: Low
+   - **File:Line**: `src/failover.ts:27`
+   - **Reproduction**:
+     Standard browser `fetch` throws `TypeError: Failed to fetch` on network disconnection. The connection error regex matched `/fetch failed/i` (with "fetch" before "failed"), returning `false` for `"Failed to fetch"`. Additionally, when errors wrap underlying failures in `e.originalError` or `e.cause`, `isConnectionError` evaluated `String(e)` as `"[object Object]"` returning `false`. Consequently, `FailoverProvider` failed to fail over on browser fetch network errors or wrapped errors.
+   - **Suggested Fix**: Update `CONNECTION` regex to match `/failed to fetch|fetch failed/i` and extract error messages recursively checking `e.originalError` and `e.cause`. Tested in `test/failover.test.ts`.
+
+2. **AL3-02: Potential Unhandled Rejection on Timeout in `withTimeout`**
+   - **Severity**: Low
+   - **File:Line**: `src/failover.ts:45`
+   - **Reproduction**:
+     In `withTimeout`, if the underlying promise `p` times out and later rejects (e.g. a hanging socket errors out seconds after timeout), `Promise.race` has already rejected with `TimeoutError`. Because `p` had only `.finally()` attached without a `.catch()`, Node.js triggered an `UnhandledPromiseRejection`.
+   - **Suggested Fix**: Attach `.catch(() => {})` to `p` inside `withTimeout` to safely swallow late rejections after timeout. Tested in `test/failover.test.ts`.
+
+3. **AL3-03: Misleading `LimitExceededError` Message when Request `amount > limit`**
+   - **Severity**: Low
+   - **File:Line**: `src/state.ts:53`
+   - **Reproduction**:
+     When a payment request outflow `amount` exceeds the covenant limit (`amount > limit`), if `remaining > 0n` (current window not yet ended), `LimitExceededError` reported that the window resets after ~`remaining` blocks. However, even after the window resets, `amount` will still exceed `limit` and be rejected.
+   - **Suggested Fix**: Update `LimitExceededError` condition to check `amount <= limit && remaining > 0n` before suggesting a window reset wait. Tested in `test/agent.test.ts`.
+
+4. **AL3-04: CLI `--net=mainnet` Flag Parsing & API Key Redaction**
+   - **Severity**: Info
+   - **File:Line**: `scripts/agent.ts:33`, `src/agent.ts:344`
+   - **Reproduction**:
+     `opt('--net')` in `scripts/agent.ts` checked `--net mainnet` but missed `--net=mainnet` key-value format, which defaulted to `mock` instead of refusing mainnet. Furthermore, while `LlmPlanner` does not log keys, ensuring `apiKey` is explicitly redacted from any thrown LLM HTTP or network error prevents accidental key exposure.
+   - **Suggested Fix**: Support `--flag=value` in `scripts/agent.ts` argument parser and redact `apiKey` in `LlmPlanner` error handling. Tested in `test/agent.test.ts`.
+
+5. **AL3-05: `runAgent` Loop Handling of Non-SDK Call Failures**
+   - **Severity**: Low
+   - **File:Line**: `src/agent.ts:248`
+   - **Reproduction**:
+     In `runAgent`, `refusalsInRow` was reset to 0 whenever `call.outcome !== 'refused'`. If calls resulted in `call.outcome === 'failed'` (e.g. tool server network error), `refusalsInRow` reset to 0, causing `runAgent` to loop until `maxSteps` was reached instead of stopping after `maxRefusalsInRow` consecutive failures.
+   - **Suggested Fix**: Reset `refusalsInRow` to 0 only on `call.outcome === 'paid'`, incrementing on both `'refused'` and `'failed'`. Tested in `test/agent.test.ts`.
+
+---
+
+### Verification and Compliance Checks (Stage 3)
+
+- **Prompt-Injection & Untrusted Tool Answers Analysis**:
+  Verified that untrusted tool server answers cannot compel the agent to spend beyond covenant limits or pay unapproved recipients. All payment requests strictly pass through `leashFetch` off-chain checks (`maxPrice`, `allow` list matching) and on-chain CashScript covenant constraints (`spent + outflow <= limit`, `maxFee` cap, recipient script check). Prompt injection payloads cannot bypass these cryptographic boundaries.
+- **Failover & Node Refusal Verbatim Behavior**:
+  Verified that node refusals (e.g., script flag failures, transaction rule rejections) are thrown verbatim without retrying on other servers. Only connection errors and timeouts trigger failover.
+- **Mainnet Guard & Key Protection**:
+  Confirmed that `scripts/agent.ts` strictly refuses mainnet execution and that LLM API keys are redacted from error output.
+- **Test Suite Status**:
+  All 186 unit tests pass green (`npm test`). Type checks pass (`npm run typecheck`, `npm run web:typecheck`).
+
+### Maintainer response, stage 3 (16.10.2026, Jules session 2143745479377256987)
+
+| Finding | Outcome |
+|---|---|
+| AL3-01 | **Accepted, rewritten.** "Failed to fetch" and other network codes added. The patch read only the innermost message (`originalError` first), so a wrapper could hide a connection error or the reverse; `isConnectionError` now checks the error and up to 3 wrapped errors and fails over if any is a connection problem. Extra test: a wrapped node refusal (`non-BIP68-final`) is still not a connection error. |
+| AL3-02 | **Accepted as a safeguard.** The late rejection was already handled (the `finally`-derived promise is subscribed by `Promise.race`), so no unhandled rejection occurred; the explicit `catch` costs nothing. |
+| AL3-03 | **Accepted.** A single payment above the whole limit no longer suggests waiting for a reset. |
+| AL3-04 | **Accepted, fixed.** `--net=mainnet` used to fall back to `mock` silently (not unsafe, but misleading); now refused like `--net mainnet`. The patch's `split('=')[1]` cut values containing `=` (e.g. a goal); replaced by `slice`. Key redaction in LLM errors accepted (defence in depth; the key was never logged). |
+| AL3-05 | **Accepted.** Failed calls count towards the stop rule like refusals; the finish text says "refused or failed calls". |
+
+Tests: 187 (183 + 4 from this round).

@@ -50,9 +50,9 @@ export class LimitExceededError extends Error {
   constructor(public state: LeashState, public amount: bigint, public limit: bigint, public period: bigint, public elapsedAdd = 0n) {
     const left = limit - state.spent;
     const remaining = period - state.elapsed - elapsedAdd;
-    super(remaining > 0n
+    super(amount <= limit && remaining > 0n
       ? `limit exceeded: ${state.spent} of ${limit} sats spent in this window, ${amount} requested (payment + fee), ${left > 0n ? left : 0n} left; window resets after ~${remaining} more blocks of state-UTXO age`
-      // the payment opens a fresh window and is still too big on its own
+      // the payment exceeds the whole window limit on its own
       : `limit exceeded: ${amount} requested (payment + fee) is more than the whole window limit of ${limit} sats`);
     this.name = 'LimitExceededError';
   }

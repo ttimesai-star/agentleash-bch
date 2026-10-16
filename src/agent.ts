@@ -117,7 +117,7 @@ export interface RunAgentOptions {
   fetchImpl?: typeof fetch;
   /** Hard cap on planner steps. Default 8. */
   maxSteps?: number;
-  /** Stop after this many refusals in a row. Default 2. */
+  /** Stop after this many refused or failed calls in a row (Jules AL3-05). Default 2. */
   maxRefusalsInRow?: number;
   on?: (e: AgentEvent) => void;
   now?: () => Date;
@@ -245,10 +245,10 @@ export async function runAgent(o: RunAgentOptions): Promise<AgentRunResult> {
         }
       }
     }
-    refusalsInRow = call.outcome === 'refused' ? refusalsInRow + 1 : 0;
+    refusalsInRow = call.outcome === 'paid' ? 0 : refusalsInRow + 1;
     if (refusalsInRow >= maxRefusals) {
       const answer = summarize(calls);
-      emit({ kind: 'finish', step, text: `stopped after ${refusalsInRow} refusals in a row. ${answer}` });
+      emit({ kind: 'finish', step, text: `stopped after ${refusalsInRow} refused or failed calls in a row. ${answer}` });
       return result(answer, 'refusals');
     }
   }
@@ -341,9 +341,19 @@ export class LlmPlanner implements Planner {
   async next(i: PlannerInput): Promise<Decision> {
     const messages = this.prompt(i);
     let lastErr = '';
+    const redact = (s: string) => (this.o.apiKey ? s.replaceAll(this.o.apiKey, '[REDACTED]') : s);
     for (let attempt = 0; attempt < 2; attempt++) {
-      const text = await this.complete(attempt ? [...messages, { role: 'user', content: `Your last reply was not valid (${lastErr}). Reply with one JSON object only.` }] : messages);
-      try { return parseDecision(text, i.tools.map((t) => t.name)); } catch (e: any) { lastErr = String(e?.message ?? e); }
+      let text: string;
+      try {
+        text = await this.complete(attempt ? [...messages, { role: 'user', content: `Your last reply was not valid (${lastErr}). Reply with one JSON object only.` }] : messages);
+      } catch (e: any) {
+        throw new Error(redact(String(e?.message ?? e)));
+      }
+      try {
+        return parseDecision(text, i.tools.map((t) => t.name));
+      } catch (e: any) {
+        lastErr = redact(String(e?.message ?? e));
+      }
     }
     throw new Error(`LLM gave no valid decision: ${lastErr}`);
   }
@@ -351,27 +361,32 @@ export class LlmPlanner implements Planner {
   private async complete(messages: { role: string; content: string }[]): Promise<string> {
     const f = this.o.fetchImpl ?? fetch;
     const retries = this.o.retries ?? 3;
+    const redact = (s: string) => (this.o.apiKey ? s.replaceAll(this.o.apiKey, '[REDACTED]') : s);
     let r: Response;
-    for (let attempt = 0; ; attempt++) {
-      r = await f(`${this.o.baseUrl.replace(/\/+$/, '')}/chat/completions`, {
-        method: 'POST',
-        headers: { 'content-type': 'application/json', authorization: `Bearer ${this.o.apiKey}` },
-        body: JSON.stringify({ model: this.o.model, messages, temperature: 0, max_tokens: this.o.maxTokens ?? 1500 }),
-        signal: AbortSignal.timeout(this.o.timeoutMs ?? 30_000),
-      });
-      // free tiers rate-limit hard: wait (Retry-After if given, else 2 s, 4 s, 8 s) and try again
-      if ((r.status === 429 || r.status === 503) && attempt < retries) {
-        const ra = Number(r.headers.get('retry-after'));
-        await new Promise((res) => setTimeout(res, Number.isFinite(ra) && ra > 0 ? Math.min(ra, 30) * 1000 : (this.o.backoffMs ?? 2000) * 2 ** attempt));
-        continue;
+    try {
+      for (let attempt = 0; ; attempt++) {
+        r = await f(`${this.o.baseUrl.replace(/\/+$/, '')}/chat/completions`, {
+          method: 'POST',
+          headers: { 'content-type': 'application/json', authorization: `Bearer ${this.o.apiKey}` },
+          body: JSON.stringify({ model: this.o.model, messages, temperature: 0, max_tokens: this.o.maxTokens ?? 1500 }),
+          signal: AbortSignal.timeout(this.o.timeoutMs ?? 30_000),
+        });
+        // free tiers rate-limit hard: wait (Retry-After if given, else 2 s, 4 s, 8 s) and try again
+        if ((r.status === 429 || r.status === 503) && attempt < retries) {
+          const ra = Number(r.headers.get('retry-after'));
+          await new Promise((res) => setTimeout(res, Number.isFinite(ra) && ra > 0 ? Math.min(ra, 30) * 1000 : (this.o.backoffMs ?? 2000) * 2 ** attempt));
+          continue;
+        }
+        break;
       }
-      break;
+      if (!r.ok) throw new Error(`LLM HTTP ${r.status}: ${(await r.text()).slice(0, 200)}`);
+      const j = await r.json() as { choices?: { message?: { content?: string | null }; finish_reason?: string }[] };
+      const c = j.choices?.[0]?.message?.content;
+      if (typeof c !== 'string') throw new Error(`LLM response without choices[0].message.content (finish_reason: ${j.choices?.[0]?.finish_reason ?? 'none'}; a reasoning model may need a larger maxTokens)`);
+      return c;
+    } catch (e: any) {
+      throw new Error(redact(String(e?.message ?? e)));
     }
-    if (!r.ok) throw new Error(`LLM HTTP ${r.status}: ${(await r.text()).slice(0, 200)}`);
-    const j = await r.json() as { choices?: { message?: { content?: string | null }; finish_reason?: string }[] };
-    const c = j.choices?.[0]?.message?.content;
-    if (typeof c !== 'string') throw new Error(`LLM response without choices[0].message.content (finish_reason: ${j.choices?.[0]?.finish_reason ?? 'none'}; a reasoning model may need a larger maxTokens)`);
-    return c;
   }
 }
 

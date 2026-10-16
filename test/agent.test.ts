@@ -251,5 +251,28 @@ describe('LimitExceededError wording', () => {
     expect(() => nextState({ elapsed: 2n, spent: 9_000n }, 3n, 5_000n, 6n, 12_000n)).toThrow('3000 left; window resets after ~1 more blocks of state-UTXO age');
     expect(() => nextState({ elapsed: 2n, spent: 9_000n }, 0n, 5_000n, 6n, 12_000n)).toThrow('window resets after ~4 more blocks');
     expect(() => nextState({ elapsed: 5n, spent: 9_000n }, 1n, 13_000n, 6n, 12_000n)).toThrow('limit exceeded: 13000 requested (payment + fee) is more than the whole window limit of 12000 sats');
+    // amount > limit even when remaining > 0
+    expect(() => nextState({ elapsed: 1n, spent: 0n }, 0n, 15_000n, 6n, 12_000n)).toThrow('limit exceeded: 15000 requested (payment + fee) is more than the whole window limit of 12000 sats');
+  });
+});
+
+describe('additional agent hardening & redacting', () => {
+  it('LLM planner redacts the secret API key from error messages', async () => {
+    const secretKey = 'secret-sk-1234567890abcdef';
+    const fetchImpl = (async () => new Response(`Error from server containing ${secretKey}`, { status: 400 })) as typeof fetch;
+    const planner = new LlmPlanner({ baseUrl: 'https://llm.example/v1', apiKey: secretKey, model: 'm', fetchImpl });
+    const ctx = setup();
+    const input = { goal: 'g', tools: DEMO_TOOLS, calls: [], budget: budgetOf(ctx.leash, ctx.addState(10_000n), 0n), maxPrice: 1n, stepsLeft: 1 };
+    await expect(planner.next(input)).rejects.toThrow(/\[REDACTED\]/);
+    await expect(planner.next(input)).rejects.not.toThrow(secretKey);
+  });
+
+  it('runAgent stops after maxRefusalsInRow consecutive failed calls', async () => {
+    const m = mk();
+    const failingFetch = (async () => { throw new Error('tool server network drop'); }) as typeof fetch;
+    const r = await runAgent({ ...m.base, fetchImpl: failingFetch, planner: new ScriptedPlanner([], { tool: 'fortune', why: 'retry' }) });
+    expect(r.calls).toHaveLength(2);
+    expect(r.calls.every((c) => c.outcome === 'failed')).toBe(true);
+    expect(r.stoppedBy).toBe('refusals');
   });
 });

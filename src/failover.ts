@@ -24,9 +24,18 @@ export interface FailoverOptions {
   onSwitch?: (from: string, to: string, why: string) => void;
 }
 
-const CONNECTION = /failed to establish connection|websocket|timed? ?out|ECONNREFUSED|ENOTFOUND|ECONNRESET|EAI_AGAIN|ETIMEDOUT|not connected|connection (?:closed|lost|refused|reset)|disconnected|socket hang up|network ?error|fetch failed/i;
+const CONNECTION = /failed to establish connection|websocket|timed? ?out|ECONNREFUSED|ENOTFOUND|ECONNRESET|EAI_AGAIN|ETIMEDOUT|not connected|connection (?:closed|lost|refused|reset)|disconnected|socket hang up|network ?error|fetch failed|failed to fetch|ENETUNREACH|EHOSTUNREACH|EPIPE|broken pipe/i;
 
-export const isConnectionError = (e: unknown): boolean => CONNECTION.test(String((e as { message?: unknown })?.message ?? e));
+/** True if the error, or the error it wraps (`originalError` / `cause`, Jules AL3-01), is a connection problem. */
+export const isConnectionError = (e: unknown): boolean => {
+  const texts: string[] = [];
+  let cur: any = e;
+  for (let depth = 0; cur !== undefined && cur !== null && depth < 4; depth++) {
+    texts.push(String(cur?.message ?? cur));
+    cur = cur?.originalError ?? cur?.cause;
+  }
+  return texts.some((t) => CONNECTION.test(t));
+};
 
 export class TimeoutError extends Error {
   constructor(what: string, ms: number) { super(`${what} timed out after ${ms} ms`); this.name = 'TimeoutError'; }
@@ -34,6 +43,7 @@ export class TimeoutError extends Error {
 
 function withTimeout<T>(p: Promise<T>, ms: number, what: string): Promise<T> {
   let t: ReturnType<typeof setTimeout>;
+  p.catch(() => {}); // prevent unhandled rejection if p rejects after timeout
   return Promise.race([
     p.finally(() => clearTimeout(t)),
     new Promise<never>((_, reject) => { t = setTimeout(() => reject(new TimeoutError(what, ms)), ms); }),
