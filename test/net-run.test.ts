@@ -31,6 +31,12 @@ class HookedProvider extends MockNetworkProvider {
     if (h === 'lose-response') throw new Error('connection lost (test)');
     return txid;
   }
+  /** Unknown txid: the node's verbatim answer (chipnet 17.10) instead of the mock's undefined. */
+  async getRawTransaction(txid: string): Promise<string> {
+    const raw = await super.getRawTransaction(txid);
+    if (!raw) throw new Error("daemon error: DaemonError({'code': -5, 'message': 'No such mempool or blockchain transaction. Use gettransaction for wallet transactions.'})");
+    return raw;
+  }
 }
 
 const tmp = () => mkdtempSync(join(tmpdir(), 'netrun-'));
@@ -229,6 +235,50 @@ describe('net-run: recovery from the saved state', () => {
     provider.hidden.clear();
     expect(await executeWithdraw(ctx)).toBe(EXIT.ok);
     expect(await provider.getUtxos(plan.state.leash)).toHaveLength(0);
+  });
+
+  // Jules review 17.10, stage 7: Boolean(getRawTransaction()) read an empty / null answer as "unknown" (closes a
+  // run whose genesis response was lost, exit 0) and any non-empty junk as "known".
+  it('getRawTransaction answering empty, null, non-hex or another transaction for the genesis: the run is not closed', async () => {
+    const { ctx, provider, owner, logs } = mkCtx();
+    provider.addUtxo(owner.address, { ...randomUtxo({ satoshis: 100_000n }), vout: 0 });
+    const plan = await planRun(ctx);
+    saveStateAtomic(ctx.statePath, plan.state);
+    await provider.sendRawTransaction(plan.genesis.build()); // response lost: genesisTxid never written
+    provider.hidden.add(plan.leash.address).add(plan.leash.tokenAddress);
+    const real = provider.getRawTransaction.bind(provider);
+    for (const val of ['', null, undefined, 'not-hex', '012345', { error: 'ok' }, new Error('returned, not thrown')]) {
+      provider.getRawTransaction = async () => val as any;
+      expect(await executeWithdraw(ctx)).toBe(EXIT.fundsMayRemain);
+      expect(loadState(ctx.statePath).closed).toBe(false);
+      expect(String(logs.at(-1)?.error)).toMatch(/genesis status is unknown/);
+    }
+    provider.getRawTransaction = real;
+    provider.hidden.clear();
+    expect(await executeWithdraw(ctx)).toBe(EXIT.ok);
+    expect(await provider.getUtxos(plan.state.leash)).toHaveLength(0);
+  });
+
+  it('a withdraw attempt "known" only by a junk answer or by another transaction: the run is not closed as swept', async () => {
+    const { ctx, provider, owner, logs } = mkCtx();
+    provider.addUtxo(owner.address, { ...randomUtxo({ satoshis: 100_000n }), vout: 0 });
+    const plan = await planRun(ctx);
+    const genesisHex = plan.genesis.build();
+    const neverSent = 'ab'.repeat(32);
+    saveStateAtomic(ctx.statePath, { ...plan.state, withdrawAttempts: [neverSent] });
+    await provider.sendRawTransaction(genesisHex);
+    provider.hidden.add(plan.leash.address).add(plan.leash.tokenAddress); // lagging server: leash looks empty
+    const real = provider.getRawTransaction.bind(provider);
+    for (const val of ['ok', '{"error":"busy"}', { result: null }, genesisHex]) {
+      provider.getRawTransaction = async (t: string) => (t === neverSent ? val as any : real(t));
+      expect(await executeWithdraw(ctx)).toBe(EXIT.fundsMayRemain);
+      expect(loadState(ctx.statePath).closed).toBe(false);
+      expect(String(logs.at(-1)?.error)).toMatch(/status of withdraw .* is unknown/);
+    }
+    provider.getRawTransaction = real;
+    provider.hidden.clear();
+    expect(await executeWithdraw(ctx)).toBe(EXIT.ok);
+    expect(loadState(ctx.statePath)).toMatchObject({ closed: true, closeReason: 'withdrawn' });
   });
 
   it('node accepted the genesis earlier but the server does not know it now: exit 1, not closed', async () => {

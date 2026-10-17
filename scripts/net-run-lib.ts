@@ -393,7 +393,15 @@ async function waitState(ctx: Ctx, live: AgentLeash, spentBy?: string): Promise<
 
 /** Is the transaction known to the network? undefined when the server could not answer. */
 async function txKnown(ctx: Ctx, txid: string): Promise<boolean | undefined> {
-  try { return Boolean(await ctx.provider.getRawTransaction(txid)); }
+  try {
+    const raw: unknown = await ctx.provider.getRawTransaction(txid);
+    // Jules review 17.10, stage 7: "known" only for the raw transaction that hashes to this txid. An empty /
+    // null answer used to read as "unknown" (closes a never-confirmed run, exit 0) and any other truthy junk
+    // as "known" (closes the run as "already swept", exit 0); both are server errors here, run stays open.
+    if (typeof raw === 'string' && /^(?:[0-9a-f]{2})+$/i.test(raw) && hashTransaction(hexToBin(raw)) === txid.toLowerCase()) return true;
+    ctx.log({ label: 'getRawTransaction error', txid, error: `unexpected answer: ${typeof raw === 'string' ? `${raw.length} chars` : typeof raw}` });
+    return undefined;
+  }
   catch (e: any) {
     const m = String(e?.originalError ?? e?.message ?? e);
     // "Unknown" can close a run whose genesis response was lost (exit 0), so only the node's own verbatim answer
