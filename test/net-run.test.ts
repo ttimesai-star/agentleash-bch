@@ -179,6 +179,35 @@ describe('net-run: recovery from the saved state', () => {
     expect(await provider.getUtxos(plan.state.leash)).toHaveLength(0);
   });
 
+  // Jules review 17.10, stage 5 proposed treating "missing" / "not in mempool" errors as "transaction unknown".
+  // Rejected: "unknown" closes a run whose genesis response was lost; a server error must stay "status unknown".
+  it('getRawTransaction server error mentioning "missing": the run is not closed while the genesis may be on the network', async () => {
+    const { ctx, provider, owner, logs } = mkCtx();
+    provider.addUtxo(owner.address, { ...randomUtxo({ satoshis: 100_000n }), vout: 0 });
+    const plan = await planRun(ctx);
+    saveStateAtomic(ctx.statePath, plan.state);
+    await provider.sendRawTransaction(plan.genesis.build()); // response lost: genesisTxid never written
+    provider.hidden.add(plan.leash.address).add(plan.leash.tokenAddress);
+    const real = provider.getRawTransaction.bind(provider);
+    for (const m of ['bad-txns-inputs-missingorspent', 'Request missing parameter', 'tx not in mempool cache (server busy)']) {
+      provider.getRawTransaction = async () => { throw new Error(m); };
+      expect(await executeWithdraw(ctx)).toBe(EXIT.fundsMayRemain);
+      expect(loadState(ctx.statePath).closed).toBe(false);
+      expect(String(logs.at(-1)?.error)).toMatch(/genesis status is unknown/);
+    }
+    // the node's own answer for an unknown txid (chipnet Fulcrum/BCHN, 17.10) still closes a run whose genesis never left
+    const { ctx: c2, provider: p2, owner: o2 } = mkCtx();
+    p2.addUtxo(o2.address, { ...randomUtxo({ satoshis: 100_000n }), vout: 0 });
+    saveStateAtomic(c2.statePath, (await planRun(c2)).state);
+    p2.getRawTransaction = async () => { throw new Error("daemon error: DaemonError({'code': -5, 'message': 'No such mempool or blockchain transaction. Use gettransaction for wallet transactions.'})"); };
+    expect(await executeWithdraw(c2)).toBe(EXIT.ok);
+    expect(loadState(c2.statePath).closeReason).toMatch(/genesis never reached/);
+    provider.getRawTransaction = real;
+    provider.hidden.clear();
+    expect(await executeWithdraw(ctx)).toBe(EXIT.ok);
+    expect(await provider.getUtxos(plan.state.leash)).toHaveLength(0);
+  });
+
   it('node accepted the genesis earlier but the server does not know it now: exit 1, not closed', async () => {
     const { ctx, provider, owner } = mkCtx();
     provider.addUtxo(owner.address, { ...randomUtxo({ satoshis: 100_000n }), vout: 0 });
