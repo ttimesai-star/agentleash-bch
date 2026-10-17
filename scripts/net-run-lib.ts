@@ -417,8 +417,9 @@ export async function executeWithdraw(ctx: Ctx, stateArg?: RunState): Promise<nu
 async function withdrawInner(ctx: Ctx, stateArg?: RunState): Promise<number> {
   const state: RunState | undefined = stateArg ?? loadState(ctx.statePath);
   if (!state) { ctx.log({ label: 'withdraw', error: `no run state at ${ctx.statePath}` }); return EXIT.refused; }
-  if (state.closed) { ctx.log({ label: 'withdraw', note: 'run already closed', closeReason: state.closeReason, withdrawTxid: state.withdrawTxid }); return EXIT.ok; }
+  // the agent key joins the redaction set before the first log line about this state (Jules review 17.10, stage 5)
   if (typeof state.agentPrivHex === 'string') ctx.secrets?.add(state.agentPrivHex.toLowerCase());
+  if (state.closed) { ctx.log({ label: 'withdraw', note: 'run already closed', closeReason: state.closeReason, withdrawTxid: state.withdrawTxid }); return EXIT.ok; }
   if (state.version !== 1 || state.net !== ctx.net) { ctx.log({ label: 'withdraw', error: `state file is not a v1 ${ctx.net} run state` }); return EXIT.refused; }
   if (state.ownerAddress !== ctx.keys.owner.address) { ctx.log({ label: 'withdraw', error: 'state owner differs from the owner key in the secrets file' }); return EXIT.refused; }
   const live = new AgentLeash(paramsFromState(state), ctx.provider);

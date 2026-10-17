@@ -220,6 +220,25 @@ describe('net-run: private keys never in the log, txids always (Jules review 17.
     expect(redactSecrets(`no secret here ${txid}`, ['', key])).toBe(`no secret here ${txid}`);
   });
 
+  it('withdraw of an already closed run: the agent key is redacted in that log line too (Jules review 17.10, stage 5)', async () => {
+    const lines: string[] = [];
+    const secrets = new Set<string>();
+    const { ctx, provider, owner } = mkCtx();
+    const c0: Ctx = { ...ctx, secrets, log: (e) => lines.push(JSON.stringify(e, logReplacer(secrets))) };
+    provider.addUtxo(owner.address, randomUtxo({ satoshis: 100_000n, vout: 1 }));
+    expect(await executeRun(c0)).toBe(EXIT.ok);
+    const st = loadState(ctx.statePath);
+    expect(st.closed).toBe(true);
+    // a hand-edited or future close reason that quotes the key
+    saveStateAtomic(ctx.statePath, { ...st, closeReason: `closed by hand, key ${st.agentPrivHex}` });
+    lines.length = 0;
+    const fresh = new Set<string>();
+    expect(await executeWithdraw({ ...ctx, secrets: fresh, log: (e) => lines.push(JSON.stringify(e, logReplacer(fresh))) })).toBe(EXIT.ok);
+    const all = lines.join(' | ');
+    expect(all).toContain('run already closed');
+    expect(all.toLowerCase()).not.toContain(st.agentPrivHex);
+  });
+
   it('a full run through the real log path: no owner or agent key in any line, every txid present', async () => {
     const lines: string[] = [];
     const secrets = new Set<string>();
