@@ -317,3 +317,12 @@ All 17 activities read, the final patch is the session output.
 | Not in the report: remaining exit-0 paths in `withdrawInner` | Checked by us. `state.closed` (earlier close), dry run, and "withdraw accepted by the node" are the only other exit-0 paths. Residual risk, not fixed: a coin sent to the leash by a third party after the server listed the coins is not swept; the run closes on the node's acceptance of the withdraw. Every contract parameter stays in the state file and later in `local/net-run-<net>-history.jsonl`, so the owner can rebuild the leash and sweep such a coin. |
 
 Tests: 220 (218 + 2). Chipnet rehearsal after this change: README ("Rehearsal after Jules stage 7").
+
+## Review stage 8 (stage 7 re-check), 2026-10-17
+
+Jules session 17208170982034735908 on `review/agentleash-netrun-stage7` (21cf827..4d947ff), empty patch in every
+activity. No new findings: letter case and byte order of the hash check match the RPC txid; whitespace, verbose JSON
+or any other non-hex answer gives "status unknown" (exit 1, safe side); the exit-0 paths are the five listed in stage 7
+(closed, dry run, never-sent genesis on the node's verbatim answer, a recorded withdraw that hashes to its txid,
+withdraw accepted), with the third-party-coin residual already noted; both stage 7 tests fail on 21cf827
+(`expected +0 to be 1`). The live chipnet server's raw hex hashes to its txids (stage 7 dry runs). No change.
