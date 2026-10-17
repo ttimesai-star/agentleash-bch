@@ -69,13 +69,24 @@ export function logReplacer(secrets: Set<string>): (k: string, v: unknown) => un
   return (k, v) => {
     if (typeof v === 'bigint') return v.toString();
     if (k && /priv/i.test(k)) return '[REDACTED]';
-    if (typeof v === 'string') {
-      let s = v;
-      for (const sec of secrets) if (sec && s.toLowerCase().includes(sec)) s = s.replace(new RegExp(sec, 'gi'), '[REDACTED]');
-      return s;
-    }
+    if (typeof v === 'string') return redactSecrets(v, secrets);
     return v;
   };
+}
+
+/**
+ * Cut every known secret out of a string, case-insensitively (Jules review 17.10, stage 5): the secret itself
+ * may be stored in any case, and it is matched literally (a corrupted state file must not turn a "key" into a
+ * regular expression that throws inside the logger).
+ */
+export function redactSecrets(text: string, secrets: Iterable<string>): string {
+  let s = text;
+  for (const sec of secrets) {
+    if (typeof sec !== 'string' || !sec) continue;
+    const lower = sec.toLowerCase();
+    if (s.toLowerCase().includes(lower)) s = s.replace(new RegExp(lower.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'gi'), '[REDACTED]');
+  }
+  return s;
 }
 
 /**

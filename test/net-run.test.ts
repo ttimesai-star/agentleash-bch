@@ -8,7 +8,7 @@ import { binToHex } from '@bitauth/libauth';
 import { MockNetworkProvider, randomUtxo, type SpendableUtxo } from 'cashscript';
 import {
   CAPS, EXIT, MAINNET_ABS_MAX_LOSS, addressOfPkh, executeRun, executeWithdraw, knownTestnetPrivs, loadKeys, loadState,
-  logReplacer, mainnetConfirmation, mainnetGate, planRun, saveStateAtomic, type Ctx, type Keys,
+  logReplacer, mainnetConfirmation, mainnetGate, planRun, redactSecrets, saveStateAtomic, type Ctx, type Keys,
 } from '../scripts/net-run-lib.js';
 import { AgentLeash, lockingBytecodeOf } from '../src/index.js';
 import { mkKey, type Key } from './helpers.js';
@@ -208,6 +208,16 @@ describe('net-run: private keys never in the log, txids always (Jules review 17.
     expect(out).toEqual({ agentPrivHex: '[REDACTED]', ownerKey: '[REDACTED]', error: `bad key [REDACTED] in tx ${txid}`, txid, category: txid, fee: '123', nested: { privHex: '[REDACTED]', ok: 'safe' } });
     // an unknown 64-hex value is not touched: it may be a txid
     expect(JSON.stringify({ v: 'ef'.repeat(32) }, logReplacer(sec))).toContain('ef'.repeat(32));
+  });
+
+  it('redactSecrets (Jules review 17.10, stage 5): a secret stored in upper case is still cut out; a secret with regex characters is matched literally', () => {
+    const key = 'ab'.repeat(32), txid = 'cd'.repeat(32);
+    const upper = new Set([key.toUpperCase()]);
+    // the old replacer compared s.toLowerCase() with the secret as stored: an upper-case entry leaked
+    expect(JSON.stringify({ e: `key ${key} tx ${txid}`, f: key.toUpperCase() }, logReplacer(upper))).toBe(JSON.stringify({ e: `key [REDACTED] tx ${txid}`, f: '[REDACTED]' }));
+    // a corrupted state file with a non-hex "key": no throw inside the logger, literal match only
+    expect(redactSecrets('a(b) and a.b+ and axb', ['a(b)', 'a.b+'])).toBe('[REDACTED] and [REDACTED] and axb');
+    expect(redactSecrets(`no secret here ${txid}`, ['', key])).toBe(`no secret here ${txid}`);
   });
 
   it('a full run through the real log path: no owner or agent key in any line, every txid present', async () => {
