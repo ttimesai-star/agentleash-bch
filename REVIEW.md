@@ -263,3 +263,20 @@ Jules session 14765616950157296667 on `review/agentleash-netrun-hardening` (base
 | 3. Redact private keys in logs | **Accepted, extended.** The patch redacted only the owner key as a whole value. `logReplacer` also redacts this run's agent key (added to `ctx.secrets` when the run is planned or its state loaded) and cuts known keys out of longer strings (error messages). Other 64-hex values are left alone on purpose: txids and NFT categories have the same shape and must stay visible in the log. Test of a full run through the real log path: no owner or agent key in any line, self-send/genesis/withdraw txids present. |
 
 Tests: 214 (208 + 6 new; the stateCategory checks extend an existing test). No private key was ever written to a log before this round (security review 16.10, section 3); item 3 is a guard against future log lines.
+
+## Review stage 5 (net-run stage 4 re-check), 2026-10-17
+
+Jules session 15140641460170249557 on `review/agentleash-netrun-stage4` (commits 2e2c1f6..454e6ff). Jules returned a patch in the session output (no branch, no PR) and rated it "#Correct#" itself; every item was re-checked here.
+
+### Maintainer response, stage 5
+
+| Item | Outcome |
+|---|---|
+| 1. `logReplacer`: lower-case the secret before matching | **Accepted, rewritten** as `redactSecrets` (shared by the log replacer and the CLI error handler). The old code compared `s.toLowerCase()` with the secret as stored, so a secret added in upper case leaked; all current callers lower-case, so this is a guard. The secret is also regex-escaped: a corrupted state file with a non-hex "key" no longer throws inside the logger. Test fails on the previous code. |
+| 2. `withdrawInner`: add the agent key to `ctx.secrets` before the "run already closed" log line | **Accepted.** Jules' test only checked the set; ours runs the real log path with a close reason quoting the key and fails on the previous code. |
+| 3. `net-run.ts` top-level `refused:` handler redacts keys | **Accepted, simplified.** No error thrown on that path carries a key today (loadKeys/mainnetGate/usage messages), so this is defence in depth. Jules added a second set plus an extra `loadState` + `collectPrivs` in `main`; we keep one module-level set (owner key after `loadKeys`, agent key added by the lib) used by both the log replacer and the handler. |
+| 4. `txKnown`: treat `not in (mempool\|blockchain\|block)` and `missing` as "transaction unknown" | **Rejected (unsafe).** "Unknown" for the planned genesis closes the run with exit 0 when `genesisTxid` was never recorded (response lost). `missing` matches server/node errors such as `bad-txns-inputs-missingorspent` or "Request missing parameter", so a transient error would close a run whose fund is on the leash. The chipnet server's real answer for an unknown txid (probed 17.10: `No such mempool or blockchain transaction. Use gettransaction for wallet transactions.`, code -5) is already matched. A pinning test with three such errors fails under the proposed regex. Jules' own test for this item was vacuous (`expect(...).toBeDefined()`). |
+| 5. `stateCategory.toLowerCase()` in `paramsFromState`, `scripts/agent.ts`, `scripts/demo-leash.ts`, `web/src/store.ts` (`paramsOf`, `descriptorOf`, `fromShareHash`) | **Rejected.** No caller produces an upper-case category: genesis txids, `demo.json`, run states and share links are all written by this code from libauth's lower-case hex; the web placeholder is `'00'.repeat(32)`. A hand-edited upper-case share link is refused with a clear toast ("Cannot open leash: stateCategory must be 64 lowercase hex chars"), which is the intended fail-closed behaviour of stage 4 item 2b. The patch also lower-cased `stateCategory` in `fromShareHash` but not the descriptor `id`, leaving id and category out of step in the picker and `forget`. |
+| 6. `/// <reference types="vite/client" />` in `test/review4.test.ts` | **Rejected**, not needed: `tsc --noEmit` and vitest pass without it. |
+
+Tests: 217 (214 + 3). Chipnet rehearsal after these changes: see `scripts/chipnet-run-log.jsonl` and README.
