@@ -299,3 +299,21 @@ holds an intermediate patch Jules withdrew before reporting; that patch pointed 
 | Test count claim "218 passed" with "217 tests" | Jules ran its intermediate test; irrelevant after the revert. |
 
 Tests: 218 (217 + 1). Chipnet rehearsal after this change: README ("Rehearsal after Jules stage 6").
+
+## Review stage 7 (net-run stage 6 re-check), 2026-10-17
+
+Jules session 9034053602620583136 on `review/agentleash-netrun-stage6` (commits 0b3c751..21cf827). Questions: (1) any
+path where a server error, timeout, empty or malformed `getRawTransaction` answer closes a run or gives exit 0 with
+funds possibly on the leash; (2) unknown-txid answers from other servers; (3) does the stage 6 test fail on 0b3c751.
+All 17 activities read, the final patch is the session output.
+
+### Maintainer response, stage 7
+
+| Item | Outcome |
+|---|---|
+| 1. `txKnown` returned `Boolean(getRawTransaction())`: `""` / `null` / `undefined` read as "unknown" and closed a run whose genesis response was lost (exit 0, fund on the leash). Patch: `undefined` unless the answer is a hex string of 100+ chars | **Accepted, rewritten (`0a8069a`).** Jules covered only the "unknown" side. The same `Boolean` read any non-empty junk (`"ok"`, an error JSON string) as "known", and for a withdraw attempt "known" closes the run as "already swept", also exit 0; a hex check alone still accepts another transaction's hex. Now "known" only when the answer is hex and `hashTransaction(answer) === txid`; anything else is logged and gives "status unknown", exit 1. Two tests (genesis: 7 bad answers; withdraw attempt: 3 junk answers + the genesis hex) fail on the previous code. The test mock answers an unknown txid with the node's verbatim -5 error, as in Jules's patch. |
+| 2. Other servers (Fulcrum, ElectrumX, BCHN without `-txindex`) answering an unknown txid in other words keep a never-sent run open with exit 1; safe | **Agreed, no change.** Exit 1 keeps the state file; the operator checks the leash in an explorer. A false "unknown" would close a run with funds; the regex stays the verbatim node answer only. |
+| 3. Stage 6 test fails on 0b3c751 | **Agreed** (we had checked it in stage 6). |
+| Not in the report: remaining exit-0 paths in `withdrawInner` | Checked by us. `state.closed` (earlier close), dry run, and "withdraw accepted by the node" are the only other exit-0 paths. Residual risk, not fixed: a coin sent to the leash by a third party after the server listed the coins is not swept; the run closes on the node's acceptance of the withdraw. Every contract parameter stays in the state file and later in `local/net-run-<net>-history.jsonl`, so the owner can rebuild the leash and sweep such a coin. |
+
+Tests: 220 (218 + 2). Chipnet rehearsal after this change: README ("Rehearsal after Jules stage 7").
