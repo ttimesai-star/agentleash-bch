@@ -461,6 +461,15 @@ Rehearsal after Jules stage 5 (17.10.2026, literal case-insensitive key redactio
 `25317a47a6505257cbfc00ce61a7afbce6beb0ffde54f8b02b7c3c3c57418a79`, run closed, exit 0; no owner or agent key in the
 log or on stdout.
 
+Rehearsal after Jules stage 6 (17.10.2026, `txKnown` narrowed to the node's verbatim answer): genesis
+`6724b4de559753260faa82092f2097aeaa8cb16c0e133a614d7ef4e1cbbf3536`, payment
+`f11f30249b2e0294305d3f9e35a01c1857f4eb3089791874d10a416ab47a0673`, attack rejected
+(`mandatory-script-verify-flag-failed`), withdraw 28 295 sats
+`18530a457d958e1df59714fdcc090d0d1d24a6385ebdde17bc5a61f8f07cc4ac`, run closed, exit 0; no key in the log. The
+chipnet server still answers an unknown txid with `No such mempool or blockchain transaction` (code -5), and two
+dry-run `withdraw`s against the live server on edited copies of the state took both evidence paths: a never-sent
+genesis closes the run, a known withdraw txid closes it as "already swept".
+
 Earlier rehearsal (16.10.2026, previous script version): genesis `c6acbe41…`, payment `4a904e78…`, attack rejected,
 withdraw `1829c12e…`.
 

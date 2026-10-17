@@ -280,3 +280,22 @@ Jules session 15140641460170249557 on `review/agentleash-netrun-stage4` (commits
 | 6. `/// <reference types="vite/client" />` in `test/review4.test.ts` | **Rejected**, not needed: `tsc --noEmit` and vitest pass without it. |
 
 Tests: 217 (214 + 3). Chipnet rehearsal after these changes: see `scripts/chipnet-run-log.jsonl` and README.
+
+## Review stage 6 (net-run stage 5 re-check), 2026-10-17
+
+Jules session 6091312865871295007 on `review/agentleash-netrun-stage5` (commits 454e6ff..9fe5964). The session
+completed with an empty final patch and a chat report rating all four areas "verified". Its activity log, however,
+holds an intermediate patch Jules withdrew before reporting; that patch pointed at a real bug in our own code.
+
+### Maintainer response, stage 6
+
+| Item | Outcome |
+|---|---|
+| 1. `redactSecrets`: case-insensitive literal match, escaping, no ReDoS, `logReplacer` keeps txids / categories / bigints | **Agreed, no change.** Matches our tests. |
+| 2. `withdrawInner`: agent key in `ctx.secrets` before the first log line about the state | **Agreed, no change.** |
+| 3. `net-run.ts`: one module-level set, filled after `loadKeys`, used by the log replacer and the `refused:` handler | **Agreed, no change.** |
+| 4. Report: "`404 Not Found`, `Method not found` fail the `txKnown` regex, so the run stays open" | **Report wrong; bug fixed.** The regex still had a bare `not found` alternative (and `unknown transaction`) from 16.10, so exactly these texts made `txKnown` return false and closed a run whose genesis response was lost (exit 0, fund on the leash), the failure class rejected in stage 5 item 4. `8c0c28e`: only the node's verbatim `No such mempool or blockchain transaction` counts as "unknown" (re-probed on chipnet 17.10); test with six such errors (incl. `blockchain.transaction.get: Method not found`, `unknown transaction type`) fails on the previous code. |
+| 4a. Withdrawn patch: regex `(transaction\|tx\|txid).*not found\|not found.*(transaction\|tx\|txid)\|no such (mempool\|blockchain\|...)* transaction` | **Rejected.** Still broad: `blockchain.transaction.get: Method not found` and `tx not found in cache, try again` match it, both server errors. A server that answers an unknown txid in other words gets exit 1 ("status unknown") instead, which is the safe side: the run stays open until a server gives the node's answer. Its test also expected `Transaction not found` to close the run, which we do not want. |
+| Test count claim "218 passed" with "217 tests" | Jules ran its intermediate test; irrelevant after the revert. |
+
+Tests: 218 (217 + 1). Chipnet rehearsal after this change: README ("Rehearsal after Jules stage 6").
