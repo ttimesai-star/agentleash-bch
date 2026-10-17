@@ -208,6 +208,29 @@ describe('net-run: recovery from the saved state', () => {
     expect(await provider.getUtxos(plan.state.leash)).toHaveLength(0);
   });
 
+  // Jules review 17.10, stage 6: the patch Jules withdrew showed that our own regex still had a bare "not found",
+  // so a JSON-RPC "Method not found" or an HTTP "404 Not Found" closed a run whose genesis response was lost.
+  it('getRawTransaction errors saying "not found" about something else: the run is not closed', async () => {
+    const { ctx, provider, owner, logs } = mkCtx();
+    provider.addUtxo(owner.address, { ...randomUtxo({ satoshis: 100_000n }), vout: 0 });
+    const plan = await planRun(ctx);
+    saveStateAtomic(ctx.statePath, plan.state);
+    await provider.sendRawTransaction(plan.genesis.build()); // response lost: genesisTxid never written
+    provider.hidden.add(plan.leash.address).add(plan.leash.tokenAddress);
+    const real = provider.getRawTransaction.bind(provider);
+    for (const m of ['Method not found', 'blockchain.transaction.get: Method not found', '404 Not Found', 'Host not found',
+      'tx not found in cache, try again', 'unknown transaction type']) {
+      provider.getRawTransaction = async () => { throw new Error(m); };
+      expect(await executeWithdraw(ctx)).toBe(EXIT.fundsMayRemain);
+      expect(loadState(ctx.statePath).closed).toBe(false);
+      expect(String(logs.at(-1)?.error)).toMatch(/genesis status is unknown/);
+    }
+    provider.getRawTransaction = real;
+    provider.hidden.clear();
+    expect(await executeWithdraw(ctx)).toBe(EXIT.ok);
+    expect(await provider.getUtxos(plan.state.leash)).toHaveLength(0);
+  });
+
   it('node accepted the genesis earlier but the server does not know it now: exit 1, not closed', async () => {
     const { ctx, provider, owner } = mkCtx();
     provider.addUtxo(owner.address, { ...randomUtxo({ satoshis: 100_000n }), vout: 0 });

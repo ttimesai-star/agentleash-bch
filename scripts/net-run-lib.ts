@@ -396,7 +396,10 @@ async function txKnown(ctx: Ctx, txid: string): Promise<boolean | undefined> {
   try { return Boolean(await ctx.provider.getRawTransaction(txid)); }
   catch (e: any) {
     const m = String(e?.originalError ?? e?.message ?? e);
-    if (/no such (mempool or blockchain )?transaction|not found|unknown transaction/i.test(m)) return false;
+    // "Unknown" can close a run whose genesis response was lost (exit 0), so only the node's own verbatim answer
+    // for an unknown txid counts (BCHN code -5, chipnet 17.10). Any other text, e.g. "Method not found" or
+    // "404 Not Found", is a server error: status unknown, run stays open (Jules review 17.10, stage 6).
+    if (/no such mempool or blockchain transaction/i.test(m)) return false;
     ctx.log({ label: 'getRawTransaction error', txid, error: m.split('\n')[0] });
     return undefined;
   }
