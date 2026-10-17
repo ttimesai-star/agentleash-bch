@@ -29,7 +29,7 @@ import { homedir } from 'os';
 import { fileURLToPath } from 'url';
 import { ElectrumNetworkProvider } from 'cashscript';
 import {
-  CAPS, EXIT, executeRun, executeWithdraw, knownTestnetPrivs, loadKeys, loadState, logReplacer, mainnetConfirmation, mainnetGate, type Ctx, type Net,
+  CAPS, EXIT, executeRun, executeWithdraw, knownTestnetPrivs, loadKeys, loadState, logReplacer, mainnetConfirmation, mainnetGate, redactSecrets, type Ctx, type Net,
 } from './net-run-lib.js';
 
 const argv = process.argv.slice(2);
@@ -37,6 +37,9 @@ const net = argv[0] as Net;
 const cmd = argv[1] ?? 'status';
 const BROADCAST = argv.includes('--broadcast');
 const opt = (name: string) => argv.find((a) => a.startsWith(`--${name}=`))?.slice(name.length + 3);
+// Known private keys: owner key after loadKeys, the run's agent key added by the lib as soon as it is known.
+// Used by every log line and by the top-level error handler (Jules review 17.10, stage 5); txids stay visible.
+const secrets = new Set<string>();
 
 async function main(): Promise<number> {
   if (net !== 'chipnet' && net !== 'mainnet') throw new Error('usage: net-run.ts chipnet|mainnet status|run|withdraw [--broadcast]');
@@ -45,14 +48,13 @@ async function main(): Promise<number> {
   const secretsDir = `${homedir()}/.claude/secrets`;
   const caps = CAPS[net];
   const keys = loadKeys(net, secretsDir, net === 'mainnet' ? knownTestnetPrivs(secretsDir, repoDir) : new Set());
+  secrets.add(keys.owner.privHex.toLowerCase());
   mainnetGate({ net, cmd, broadcast: BROADCAST, env: process.env, confirm: opt('confirm-mainnet'), caps, ownerAddress: keys.owner.address });
 
   mkdirSync(`${repoDir}/local`, { recursive: true });
   const statePath = opt('state') ?? `${repoDir}/local/net-run-${net}.json`;
   const logPath = `${repoDir}/scripts/${net}-run-log.jsonl`;
   const provider = new ElectrumNetworkProvider(net);
-  // owner key now, the run's agent key added by the lib as soon as it is known (txids stay visible)
-  const secrets = new Set([keys.owner.privHex.toLowerCase()]);
   const ctx: Ctx = {
     net, provider, keys, caps, broadcast: BROADCAST, statePath, historyPath: `${repoDir}/local/net-run-${net}-history.jsonl`, secrets,
     log: (e) => {
@@ -82,5 +84,5 @@ async function main(): Promise<number> {
 
 main().then(
   (code) => { if (code !== EXIT.ok) console.error(`exit ${code}${code === EXIT.fundsMayRemain ? ': funds may still be on the leash, run withdraw' : ''}`); process.exit(code); },
-  (e) => { console.error(`refused: ${e?.message ?? e}`); process.exit(EXIT.refused); },
+  (e) => { console.error(`refused: ${redactSecrets(String(e?.message ?? e), secrets)}`); process.exit(EXIT.refused); },
 );
