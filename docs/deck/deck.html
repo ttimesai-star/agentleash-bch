@@ -211,7 +211,7 @@ ATTACK clock             node: non-BIP68-final</span></pre>
     <div class="bar">Does it work? Tested like an attacker</div>
     <div class="grid3">
       <div class="panel"><p style="font-size:44px; font-weight:800; margin:0" class="ok">187</p><p class="small">automated tests (vitest, CashScript mock network that runs the covenant in the BCH VM), incl. <b>29 attacks</b> with the exact rejection text and a property test of the worst case (2 × limit around a reset)</p></div>
-      <div class="panel"><p style="font-size:44px; font-weight:800; margin:0" class="ok">Real</p><p class="small">chipnet runs with txids in the README: covenant, 402 paywall (also with 1 confirmation, a real block), web page, WizardConnect over the public relays, the agent</p></div>
+      <div class="panel"><p style="font-size:44px; font-weight:800; margin:0" class="ok">Real</p><p class="small">chipnet runs with txids in the README: covenant, 402 paywall (also with 1 confirmation, a real block), web page, WizardConnect over the public relays, the agent; <b>mainnet 01.11.2026</b>: genesis, agent payment with receipt, attack refused by the node, owner withdraw</p></div>
       <div class="panel"><p style="font-size:44px; font-weight:800; margin:0" class="warn">Unaudited</p><p class="small">prototype; 7 automated review rounds by another vendor's model (Google Jules: contract, paywall, WizardConnect), each finding fixed with a test or documented; no professional audit yet</p></div>
     </div>
     <div class="panel" style="margin-top:20px; padding:16px 24px">
@@ -286,9 +286,9 @@ ATTACK clock             node: non-BIP68-final</span></pre>
     <table style="font-size:19px">
       <tr><th>When</th><th>What</th><th>State</th></tr>
       <tr><td>10–16.10</td><td>covenant, SDK, 402 paywall, WizardConnect owner path, web demo, agent</td><td><span class="tag g">done</span>chipnet</td></tr>
-      <tr><td>by 31.10</td><td>capped mainnet run (≤ 3 USD): genesis, agent payment, attack refused, withdraw</td><td><span class="tag y">planned</span>script ready</td></tr>
-      <tr><td>by 31.10</td><td>real wallet apps sign the owner path (Paytaca, Cashonize, Selene)</td><td><span class="tag y">planned</span>Paytaca's code: pass</td></tr>
-      <tr><td>31.10</td><td>contract freeze (tag), external review round</td><td><span class="tag y">planned</span></td></tr>
+      <tr><td>01.11</td><td>capped mainnet run (20 000 sats): genesis 9f901909…, agent payment f9eae3e1…, attack refused by the node, withdraw 1161976b…</td><td><span class="tag g">done</span>mainnet</td></tr>
+      <tr><td>November</td><td>real wallet apps sign the owner path (Paytaca, Cashonize, Selene)</td><td><span class="tag y">planned</span>Paytaca's code: pass</td></tr>
+      <tr><td>November</td><td>contract freeze (tag), external review round</td><td><span class="tag y">planned</span></td></tr>
       <tr><td>November</td><td>mainnet demo leash on the site, submission</td><td><span class="tag y">planned</span></td></tr>
       <tr><td>next</td><td>limits in a stablecoin CashToken (e.g. PUSD), <code>exact</code> scheme, sliding window, audit</td><td><span class="tag">roadmap</span></td></tr>
     </table>
