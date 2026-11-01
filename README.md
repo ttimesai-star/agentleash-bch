@@ -34,12 +34,12 @@ create your own leash with free chipnet coins ("Create your own").
 | Demo agent (scripted planner, or any OpenAI-compatible LLM with your key) | **works on chipnet** (16.10.2026, see "Demo agent") |
 | Web demo: autopilot, tools, 5 attacks, journal, create / top up / withdraw | **live on chipnet**, Electrum failover between two public servers |
 | WizardConnect owner path | **works** with a headless wallet over the public relays and with Paytaca's own signing code; **not yet tested** in the Paytaca, Cashonize and Selene apps |
-| Mainnet | **planned, not done**: one capped run (owner funds at most ~3 USD: genesis, an agent payment, an attack the network refuses, withdraw) with `scripts/net-run.ts`; the script is rehearsed on chipnet. Mainnet txids will be added here after the run; until then nothing in this README claims mainnet |
+| Mainnet | **one capped run done, 01.11.2026** (see "Mainnet run"): genesis [`9f901909d455834a…`](https://blockchair.com/bitcoin-cash/transaction/9f901909d455834a65a5f2c54668ea006c51c18c19b974c305c1dd11de3e758b), agent payment with receipt [`f9eae3e1dbea62da…`](https://blockchair.com/bitcoin-cash/transaction/f9eae3e1dbea62dae01b7ba7a0f72e96eef55cb180ff956b091b912ee41cbed2), an attack the mainnet node refused verbatim, owner withdraw [`1161976b4c7d1b7c…`](https://blockchair.com/bitcoin-cash/transaction/1161976b4c7d1b7c65b1e2dedf302b7c639e1abb4aa1f1e10d252d74542e3aa6). Not a production deployment: 20 000 sats, unaudited contract |
 
 ## Status (honest): prototype, unaudited
 
-**Prototype, unaudited. Chipnet only for now. Do not put real money in it.** No external users yet; no
-professional audit; the contract is not frozen. A capped mainnet run is prepared (see "Mainnet run"), not done.
+**Prototype, unaudited. Do not put real money in it.** (One capped mainnet demonstration run, 20 000 sats.) No external users yet; no
+professional audit; the contract is not frozen. One capped mainnet run was done on 01.11.2026 (20 000 sats, see "Mainnet run"); that is a demonstration, not a deployment.
 
 | Part | State (16.10.2026) |
 |---|---|
@@ -51,7 +51,7 @@ professional audit; the contract is not frozen. A capped mainnet run is prepared
 | Chipnet | stage-1 scenario (covenant) and stage-2 scenario (402 server + agent), logs in `scripts/` |
 | Web UI (`web/`, static, GitHub Pages) | **live on chipnet** (16.10.2026): network flag (chipnet default, mainnet locked by a build flag), public demo leash, 3 paid tools over the 402 `leash` scheme, "try to break it" (5 attacks broadcast to the node, verbatim refusal shown), journal from the chain, create / top up / withdraw by the owner via WizardConnect or a chipnet-only browser key. End-to-end in headless Chromium, see "Web demo" |
 | Demo agent (`src/agent.ts`, `scripts/agent.ts`) | **works on chipnet** (16.10.2026): planner (scripted, or any OpenAI-compatible LLM) chooses tools, pays each over 402 from the leash, refused before signing past the window; compromised phase broadcasts rule-breaking transactions, the node refuses. Web page: same loop as an autopilot button |
-| Mainnet | **not done**; capped run script prepared and rehearsed on chipnet (`scripts/net-run.ts`) |
+| Mainnet | **one capped run, 01.11.2026** (`scripts/net-run.ts`, log `scripts/mainnet-run-log.jsonl`), txids in "Mainnet run" |
 
 ## How it works
 
@@ -405,7 +405,7 @@ moves the request to `chipnet.imaginary.cash` (both checked 16.10.2026); a node'
 The page holds no server of its own (static site; the 402 tool server runs in the page), so there is no backend to fall
 over.
 
-## Mainnet run (prepared, not done)
+## Mainnet run (done once, 01.11.2026)
 
 `scripts/net-run.ts` (logic in `scripts/net-run-lib.ts`, 32 tests in `test/net-run.test.ts`):
 
@@ -435,6 +435,17 @@ npx tsx scripts/net-run.ts <chipnet|mainnet> withdraw [--broadcast] # recover an
 - **Mainnet barrier:** `AGENTLEASH_MAINNET_OK=yes` (set only after the owner of the funds approved) **and**
   `--confirm-mainnet=<loss ceiling in sats>:<last 6 chars of the owner address>` (printed by `status` after the caps).
   `withdraw` needs only the env flag: it can pay only the owner. Each broadcast is logged to `scripts/<net>-run-log.jsonl`.
+
+Mainnet run, 01.11.2026 (`scripts/mainnet-run-log.jsonl`), same script, owner AL-08 `bitcoincash:qqhftqrfgyut6hr9adck6j2h3lwhg4sg4gnwa8hezy`:
+
+| Step | Result | txid |
+|---|---|---|
+| genesis, 20 000 sats, fee 285 | accepted | [`9f901909d455834a…`](https://blockchair.com/bitcoin-cash/transaction/9f901909d455834a65a5f2c54668ea006c51c18c19b974c305c1dd11de3e758b) |
+| agent pays 1 000 sats with an `OP_RETURN "LSH1"` receipt, fee 705 | accepted | [`f9eae3e1dbea62da…`](https://blockchair.com/bitcoin-cash/transaction/f9eae3e1dbea62dae01b7ba7a0f72e96eef55cb180ff956b091b912ee41cbed2) |
+| attack: pay a non-allow-listed address | rejected by the mainnet node: `mandatory-script-verify-flag-failed (Script failed an OP_VERIFY operation) (code 16)` (local: `pay: recipient not allow-listed`) | — |
+| owner withdraws everything, fee 603 | accepted, run closed (`withdrawn`) | [`1161976b4c7d1b7c…`](https://blockchair.com/bitcoin-cash/transaction/1161976b4c7d1b7c65b1e2dedf302b7c639e1abb4aa1f1e10d252d74542e3aa6) |
+
+Total cost of the run: 1 000 sats paid to our own payee + 1 593 sats in fees.
 
 Chipnet rehearsal, 17.10.2026 (`scripts/chipnet-run-log.jsonl`), with the script as above:
 
